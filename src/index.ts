@@ -407,9 +407,9 @@ app.post('/process-youtube', express.json(), async (req: Request, res: Response)
       // Extract audio from this specific clip for transcription
       const clipAudioPath = await extractAudioFromClip(clippedVideo, `${jobId}-clip-${i + 1}`);
 
-      // Transcribe audio to text (speech-to-text)
-      const subtitleText = await transcribeAudioToText(clipAudioPath);
-      console.log(`📝 Transcribed subtitle: "${subtitleText}"`);
+      // Transcribe audio to timestamped subtitles (SRT format)
+      const srtPath = await generateTimestampedSubtitles(clipAudioPath, `${jobId}-clip-${i + 1}`);
+      console.log(`📝 Generated SRT subtitle: ${path.basename(srtPath)}`);
 
       // Cleanup clip audio
       if (fs.existsSync(clipAudioPath)) {
@@ -417,11 +417,16 @@ app.post('/process-youtube', express.json(), async (req: Request, res: Response)
       }
 
       // Burn subtitle to video
-      const finalVideo = await burnSubtitleToVideo(
+      const finalVideo = await burnSRTSubtitleToVideo(
         clippedVideo,
-        subtitleText,
+        srtPath,
         `${jobId}-final-${i + 1}`
       );
+      
+      // Cleanup SRT file
+      if (fs.existsSync(srtPath)) {
+        fs.unlinkSync(srtPath);
+      }
       console.log(`✅ Burned subtitle to: ${path.basename(finalVideo)}`);
 
       // Cleanup temporary clipped video
@@ -684,59 +689,97 @@ function trimVideo(inputPath: string, startTime: number, endTime: number, output
   });
 }
 
-// Helper: Transcribe audio to text using Gemini
-async function transcribeAudioToText(audioPath: string): Promise<string> {
+// Helper: Generate timestamped subtitles (SRT format)
+async function generateTimestampedSubtitles(audioPath: string, clipId: string): Promise<string> {
   try {
-    console.log(`🎙️ Transcribing audio: ${audioPath}`);
+    console.log(`🎙️ Transcribing audio with timestamps: ${audioPath}`);
     
     // Read audio file and convert to base64
     const audioBuffer = fs.readFileSync(audioPath);
     const audioBase64 = audioBuffer.toString('base64');
 
-    const prompt = `Transcribe this audio to text. Return ONLY the exact words spoken, without any additional formatting, quotes, or explanations. If multiple sentences, separate with spaces.`;
+    const prompt = `Transcribe this audio to text with precise timestamps. Return the result in JSON array format like this:
+[
+  {"start": 0.0, "end": 2.5, "text": "first words"},
+  {"start": 2.5, "end": 5.0, "text": "next words"},
+  ...
+]
 
-    const transcription = await callGeminiAPI(prompt, audioBase64);
-    const cleanText = transcription
-      .trim()
-      .replace(/^["']|["']$/g, '') // Remove quotes
-      .replace(/\n+/g, ' '); // Replace newlines with spaces
+Rules:
+- Each subtitle should be 1-2 seconds max for readability
+- Split long sentences into shorter segments
+- Return ONLY the JSON array, no markdown, no explanations
+- Be precise with timing based on the actual speech`;
+
+    const response = await callGeminiAPI(prompt, audioBase64);
     
-    console.log(`   Transcribed: "${cleanText}"`);
-    return cleanText || 'No speech detected';
+    // Extract JSON from response (might have markdown code blocks)
+    let jsonText = response.trim();
+    if (jsonText.includes('```')) {
+      const match = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (match) jsonText = match[1].trim();
+    }
+    
+    const segments = JSON.parse(jsonText);
+    console.log(`   Found ${segments.length} subtitle segments`);
+    
+    // Generate SRT file
+    const srtPath = path.join(subtitleDir, `${clipId}.srt`);
+    let srtContent = '';
+    
+    segments.forEach((seg: any, index: number) => {
+      const startTime = formatSRTTime(seg.start);
+      const endTime = formatSRTTime(seg.end);
+      srtContent += `${index + 1}\n${startTime} --> ${endTime}\n${seg.text}\n\n`;
+    });
+    
+    fs.writeFileSync(srtPath, srtContent, 'utf-8');
+    console.log(`   ✅ SRT file created: ${srtPath}`);
+    
+    return srtPath;
 
   } catch (error: any) {
-    console.error('Transcription error:', error);
-    return 'Audio transcription failed';
+    console.error('Timestamped transcription error:', error);
+    
+    // Fallback: create simple single subtitle
+    const srtPath = path.join(subtitleDir, `${clipId}.srt`);
+    const fallbackSRT = `1\n00:00:00,000 --> 00:00:10,000\n[Audio transcription unavailable]\n\n`;
+    fs.writeFileSync(srtPath, fallbackSRT, 'utf-8');
+    return srtPath;
   }
 }
 
-// Helper: Burn subtitle to video
-function burnSubtitleToVideo(videoPath: string, subtitleText: string, outputName: string): Promise<string> {
+// Helper: Format seconds to SRT timestamp (HH:MM:SS,mmm)
+function formatSRTTime(seconds: number): string {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  const millis = Math.floor((seconds % 1) * 1000);
+  
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')},${String(millis).padStart(3, '0')}`;
+}
+
+// Helper: Burn SRT subtitle to video
+function burnSRTSubtitleToVideo(videoPath: string, srtPath: string, outputName: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const outputPath = path.join(outputDir, `${outputName}.mp4`);
     
-    console.log(`🔥 Burning subtitle to video...`);
+    console.log(`🔥 Burning SRT subtitle to video...`);
     console.log(`   Input: ${videoPath}`);
+    console.log(`   Subtitle: ${srtPath}`);
     console.log(`   Output: ${outputPath}`);
-    console.log(`   Subtitle: "${subtitleText}"`);
     
-    // Escape subtitle text for ffmpeg drawtext filter
-    const escapedText = subtitleText
-      .replace(/\\/g, '\\\\')     // Escape backslashes first
-      .replace(/'/g, "'\\''")     // Escape single quotes
-      .replace(/:/g, '\\:')       // Escape colons
-      .replace(/\n/g, '\\n');     // Escape newlines
-
-    const drawTextFilter = `drawtext=text='${escapedText}':fontsize=40:fontcolor=white:x=(w-text_w)/2:y=h-th-50:borderw=3:bordercolor=black:box=1:boxcolor=black@0.5:boxborderw=10`;
+    // Escape path for ffmpeg (Windows compatibility)
+    const escapedSrtPath = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:');
     
-    console.log(`   Filter: ${drawTextFilter}`);
+    const subtitleFilter = `subtitles=${escapedSrtPath}:force_style='FontName=Arial,FontSize=24,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,BorderStyle=3,Outline=2,Shadow=1,MarginV=30'`;
 
     ffmpeg(videoPath)
       .output(outputPath)
       .videoCodec('libx264')
       .audioCodec('aac')
       .outputOptions([
-        '-vf', drawTextFilter,
+        '-vf', subtitleFilter,
         '-preset', 'fast',
         '-crf', '23'
       ])
@@ -749,7 +792,7 @@ function burnSubtitleToVideo(videoPath: string, subtitleText: string, outputName
         }
       })
       .on('end', () => {
-        console.log(`   ✅ Subtitle burned successfully!`);
+        console.log(`   ✅ SRT subtitle burned successfully!`);
         resolve(outputPath);
       })
       .on('error', (err) => {
