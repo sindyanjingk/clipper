@@ -393,64 +393,87 @@ app.post('/process-youtube', express.json(), async (req: Request, res: Response)
     const processedClips = [];
 
     for (let i = 0; i < viralSegments.length; i++) {
-      const segment = viralSegments[i];
-      console.log(`Processing clip ${i + 1}/${viralSegments.length}...`);
+      try {
+        const segment = viralSegments[i];
+        console.log(`\n=== Processing clip ${i + 1}/${viralSegments.length} ===`);
+        console.log(`   Time range: ${segment.startTime}s - ${segment.endTime}s (${segment.duration}s)`);
 
-      // Trim video
-      const clippedVideo = await trimVideo(
-        downloadedVideo,
-        segment.startTime,
-        segment.endTime,
-        `${jobId}-clip-${i + 1}`
-      );
+        // Trim video
+        console.log(`   📹 Trimming video...`);
+        const clippedVideo = await trimVideo(
+          downloadedVideo,
+          segment.startTime,
+          segment.endTime,
+          `${jobId}-clip-${i + 1}`
+        );
+        console.log(`   ✅ Video trimmed: ${path.basename(clippedVideo)}`);
 
-      // Extract audio from this specific clip for transcription
-      const clipAudioPath = await extractAudioFromClip(clippedVideo, `${jobId}-clip-${i + 1}`);
+        // Extract audio from this specific clip for transcription
+        console.log(`   🎵 Extracting audio from clip...`);
+        const clipAudioPath = await extractAudioFromClip(clippedVideo, `${jobId}-clip-${i + 1}`);
+        console.log(`   ✅ Audio extracted: ${path.basename(clipAudioPath)}`);
 
-      // Transcribe audio to timestamped subtitles (SRT format)
-      const srtPath = await generateTimestampedSubtitles(clipAudioPath, `${jobId}-clip-${i + 1}`);
-      console.log(`📝 Generated SRT subtitle: ${path.basename(srtPath)}`);
+        // Transcribe audio to timestamped subtitles (SRT format)
+        console.log(`   🎙️ Generating timestamped subtitles...`);
+        const srtPath = await generateTimestampedSubtitles(clipAudioPath, `${jobId}-clip-${i + 1}`);
+        console.log(`   ✅ SRT subtitle generated: ${path.basename(srtPath)}`);
 
-      // Cleanup clip audio
-      if (fs.existsSync(clipAudioPath)) {
-        fs.unlinkSync(clipAudioPath);
+        // Cleanup clip audio
+        if (fs.existsSync(clipAudioPath)) {
+          fs.unlinkSync(clipAudioPath);
+          console.log(`   🗑️ Cleaned up temp audio`);
+        }
+
+        // Burn subtitle to video
+        console.log(`   🔥 Burning subtitle to video...`);
+        const finalVideo = await burnSRTSubtitleToVideo(
+          clippedVideo,
+          srtPath,
+          `${jobId}-final-${i + 1}`
+        );
+        console.log(`   ✅ Final video created: ${path.basename(finalVideo)}`);
+        
+        // Cleanup SRT file
+        if (fs.existsSync(srtPath)) {
+          fs.unlinkSync(srtPath);
+          console.log(`   🗑️ Cleaned up SRT file`);
+        }
+
+        // Cleanup temporary clipped video
+        if (fs.existsSync(clippedVideo)) {
+          fs.unlinkSync(clippedVideo);
+          console.log(`   🗑️ Cleaned up temp video`);
+        }
+
+        processedClips.push({
+          clipNumber: i + 1,
+          filename: path.basename(finalVideo),
+          startTime: formatTime(segment.startTime),
+          endTime: formatTime(segment.endTime),
+          duration: segment.duration,
+          reason: segment.reason,
+          keywords: segment.keywords,
+          previewUrl: `/output/${path.basename(finalVideo)}`,
+          downloadUrl: `/download/${path.basename(finalVideo)}`
+        });
+
+        console.log(`   ✅ Clip ${i + 1}/${viralSegments.length} completed!\n`);
+
+      } catch (clipError: any) {
+        console.error(`   ❌ Error processing clip ${i + 1}:`, clipError.message);
+        // Continue with next clip instead of failing entire process
+        continue;
       }
-
-      // Burn subtitle to video
-      const finalVideo = await burnSRTSubtitleToVideo(
-        clippedVideo,
-        srtPath,
-        `${jobId}-final-${i + 1}`
-      );
-      
-      // Cleanup SRT file
-      if (fs.existsSync(srtPath)) {
-        fs.unlinkSync(srtPath);
-      }
-      console.log(`✅ Burned subtitle to: ${path.basename(finalVideo)}`);
-
-      // Cleanup temporary clipped video
-      if (fs.existsSync(clippedVideo)) {
-        fs.unlinkSync(clippedVideo);
-      }
-
-      processedClips.push({
-        clipNumber: i + 1,
-        filename: path.basename(finalVideo),
-        startTime: formatTime(segment.startTime),
-        endTime: formatTime(segment.endTime),
-        duration: segment.duration,
-        reason: segment.reason,
-        keywords: segment.keywords,
-        previewUrl: `/output/${path.basename(finalVideo)}`,
-        downloadUrl: `/download/${path.basename(finalVideo)}`
-      });
     }
 
     // Cleanup original files
     cleanupFiles([downloadedVideo, audioPath]);
 
-    console.log('✅ Processing complete!');
+    console.log('\n✅ =============================================');
+    console.log(`✅ PROCESSING COMPLETE!`);
+    console.log(`✅ Successfully processed ${processedClips.length}/${viralSegments.length} clips`);
+    console.log('✅ =============================================\n');
+    
     res.json({
       success: true,
       message: 'Video berhasil diproses',
@@ -759,12 +782,12 @@ function formatSRTTime(seconds: number): string {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')},${String(millis).padStart(3, '0')}`;
 }
 
-// Helper: Burn SRT subtitle to video
+// Helper: Burn SRT subtitle to video (TikTok-friendly style)
 function burnSRTSubtitleToVideo(videoPath: string, srtPath: string, outputName: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const outputPath = path.join(outputDir, `${outputName}.mp4`);
     
-    console.log(`🔥 Burning SRT subtitle to video...`);
+    console.log(`🔥 Burning TikTok-style subtitle to video...`);
     console.log(`   Input: ${videoPath}`);
     console.log(`   Subtitle: ${srtPath}`);
     console.log(`   Output: ${outputPath}`);
@@ -772,7 +795,15 @@ function burnSRTSubtitleToVideo(videoPath: string, srtPath: string, outputName: 
     // Escape path for ffmpeg (Windows compatibility)
     const escapedSrtPath = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:');
     
-    const subtitleFilter = `subtitles=${escapedSrtPath}:force_style='FontName=Arial,FontSize=24,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,BorderStyle=3,Outline=2,Shadow=1,MarginV=30'`;
+    // TikTok-friendly subtitle style:
+    // - Font: Bold, Impact-style
+    // - Size: Large (32-40)
+    // - Color: Bright Yellow/White with thick black outline
+    // - Background: Semi-transparent black box
+    // - Position: Center-bottom with padding
+    // - Outline: Thick black border for readability
+    // - Shadow: Strong shadow for depth
+    const subtitleFilter = `subtitles=${escapedSrtPath}:force_style='FontName=Impact,FontSize=36,Bold=1,PrimaryColour=&H00FFFF,SecondaryColour=&HFFFFFF,OutlineColour=&H000000,BackColour=&H80000000,BorderStyle=4,Outline=3,Shadow=2,Alignment=2,MarginV=40'`;
 
     ffmpeg(videoPath)
       .output(outputPath)
