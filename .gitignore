@@ -3,6 +3,12 @@ dist/
 uploads/
 output/
 subtitles/
+downloads/
 *.log
 .env
 .DS_Store
+
+# YouTube cookies - SENSITIVE! Never commit!
+youtube_cookies.txt
+cookies.txt
+*.cookies

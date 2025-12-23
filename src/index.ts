@@ -351,20 +351,177 @@ app.post('/process-youtube', express.json(), async (req: Request, res: Response)
   }
 });
 
+// NEW ENDPOINT: Process YouTube Video with Direct Gemini Analysis (Faster!)
+app.post('/process-youtube-direct', express.json(), async (req: Request, res: Response): Promise<any> => {
+  req.setTimeout(SERVER_TIMEOUT);
+  res.setTimeout(SERVER_TIMEOUT);
+  
+  try {
+    res.setHeader('Content-Type', 'application/json');
+    const { url } = req.body;
+
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: "YouTube URL is required" });
+    }
+
+    console.log('🚀 Starting DIRECT YouTube video processing...');
+    const jobId = crypto.randomUUID();
+    
+    // Step 1: Get video duration first
+    console.log('📏 Getting video info...');
+    const duration = await getVideoDurationFromURL(url);
+    console.log(`📹 Video duration: ${duration} seconds`);
+
+    // Step 2: AI Analysis - Send YouTube URL directly to Gemini (NEW!)
+    console.log('🤖 Step 1: AI analyzing video directly from URL...');
+    const viralSegments = await findViralMomentsFromURL(url, duration);
+
+    // Step 3: Download video (only once!)
+    console.log('⬇️ Step 2: Downloading video...');
+    const downloadedVideo = await downloadYouTubeVideo(url, jobId);
+    
+    if (!downloadedVideo) {
+      return res.status(500).json({ error: 'Failed to download video' });
+    }
+
+    // Step 4: Process each viral segment (trim + subtitle)
+    console.log(`✂️ Step 3: Processing ${viralSegments.length} viral clips...`);
+    const processedClips: ProcessedClip[] = [];
+
+    const CONCURRENT_LIMIT = 2;
+    
+    const processClip = async (segment: ViralSegment, index: number): Promise<ProcessedClip | null> => {
+      try {
+        const i = index;
+        console.log(`\n=== Processing clip ${i + 1}/${viralSegments.length} ===`);
+        console.log(`   Time range: ${segment.startTime}s - ${segment.endTime}s (${segment.duration}s)`);
+
+        const clippedVideo = await trimVideo(
+          downloadedVideo,
+          segment.startTime,
+          segment.endTime,
+          `${jobId}-clip-${i + 1}`
+        );
+        console.log(`   ✅ Video trimmed: ${path.basename(clippedVideo)}`);
+
+        const clipAudioPath = await extractAudioFromClip(clippedVideo, `${jobId}-clip-${i + 1}`);
+        console.log(`   ✅ Audio extracted: ${path.basename(clipAudioPath)}`);
+
+        const srtPath = await generateTimestampedSubtitles(clipAudioPath, `${jobId}-clip-${i + 1}`);
+        console.log(`   ✅ SRT subtitle generated: ${path.basename(srtPath)}`);
+
+        if (fs.existsSync(clipAudioPath)) {
+          fs.unlinkSync(clipAudioPath);
+          console.log(`   🗑️ Cleaned up temp audio`);
+        }
+
+        const finalVideo = await burnSRTSubtitleToVideo(
+          clippedVideo,
+          srtPath,
+          `${jobId}-final-${i + 1}`
+        );
+        console.log(`   ✅ Final video created: ${path.basename(finalVideo)}`);
+        
+        if (fs.existsSync(srtPath)) {
+          fs.unlinkSync(srtPath);
+          console.log(`   🗑️ Cleaned up SRT file`);
+        }
+
+        if (fs.existsSync(clippedVideo)) {
+          fs.unlinkSync(clippedVideo);
+          console.log(`   🗑️ Cleaned up temp video`);
+        }
+
+        const result = {
+          clipNumber: i + 1,
+          filename: path.basename(finalVideo),
+          startTime: formatTime(segment.startTime),
+          endTime: formatTime(segment.endTime),
+          duration: segment.duration,
+          reason: segment.reason,
+          keywords: segment.keywords,
+          previewUrl: `/output/${path.basename(finalVideo)}`,
+          downloadUrl: `/download/${path.basename(finalVideo)}`
+        };
+
+        console.log(`   ✅ Clip ${i + 1}/${viralSegments.length} completed!\n`);
+        return result;
+
+      } catch (clipError: any) {
+        console.error(`   ❌ Error processing clip ${index + 1}:`, clipError.message);
+        return null;
+      }
+    };
+
+    for (let i = 0; i < viralSegments.length; i += CONCURRENT_LIMIT) {
+      const batch = viralSegments.slice(i, i + CONCURRENT_LIMIT);
+      const batchPromises = batch.map((segment, idx) => processClip(segment, i + idx));
+      const results = await Promise.all(batchPromises);
+      
+      results.forEach(result => {
+        if (result) processedClips.push(result);
+      });
+    }
+
+    cleanupFiles([downloadedVideo]);
+
+    console.log('\n✅ =============================================');
+    console.log(`✅ DIRECT PROCESSING COMPLETE!`);
+    console.log(`✅ Successfully processed ${processedClips.length}/${viralSegments.length} clips`);
+    console.log('✅ =============================================\n');
+    
+    const response = {
+      success: true,
+      message: 'Video berhasil diproses (Direct Method)',
+      jobId,
+      totalClips: processedClips.length,
+      clips: processedClips
+    };
+    
+    console.log('📤 Sending response to client:', JSON.stringify(response, null, 2));
+    res.json(response);
+
+  } catch (error: any) {
+    console.error('❌ Error:', error);
+    console.error('❌ Error stack:', error.stack);
+    
+    if (!res.headersSent) {
+      res.setHeader('Content-Type', 'application/json');
+      res.status(500).json({ 
+        success: false,
+        error: 'Failed to process video',
+        details: error.message 
+      });
+    } else {
+      console.error('❌ Headers already sent, cannot send error response');
+    }
+  }
+});
+
 // Helper: Download YouTube video
 function downloadYouTubeVideo(url: string, jobId: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const outputTemplate = path.join(downloadDir, `${jobId}.%(ext)s`);
+    const cookiesPath = path.join(__dirname, '../youtube_cookies.txt');
 
     const args = [
       "--no-playlist",
-      "--js-runtimes", "node",
-      "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-      // Limit to 720p max for faster download (can be 480p for even faster)
+      // Use cookies from browser (most reliable method)
+      // Option 1: Extract cookies from Chrome browser automatically (needs GUI access)
+      // "--cookies-from-browser", "chrome",
+      // Option 2: If using Firefox, use this instead:
+      // "--cookies-from-browser", "firefox",
+      // Option 3: Use exported cookies file (recommended for headless server)
+      ...(fs.existsSync(cookiesPath) ? ["--cookies", cookiesPath] : ["--cookies-from-browser", "chrome"]),
+      
+      // Bot bypass strategies
+      "--extractor-args", "youtube:player_client=android,web",
+      "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      
+      // Limit to 720p max for faster download
       "-f", "bv*[height<=720][vcodec^=avc1][ext=mp4]+ba[acodec^=mp4]/b[height<=720][ext=mp4]/b",
       "--merge-output-format", "mp4",
-      // Limit download speed is optional, but can help with server stability
-      // "--limit-rate", "5M",  // Uncomment to limit speed to 5MB/s
+      
       "-o", outputTemplate,
       url
     ];
@@ -447,7 +604,138 @@ function getVideoDuration(videoPath: string): Promise<number> {
   });
 }
 
-// Helper: AI - Find viral moments with audio analysis
+// Helper: Get YouTube video duration without downloading (using yt-dlp)
+function getVideoDurationFromURL(url: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const ytdlp = spawn("yt-dlp", ["--get-duration", "--no-playlist", url]);
+    let output = '';
+    
+    ytdlp.stdout.on("data", (data: Buffer) => {
+      output += data.toString();
+    });
+
+    ytdlp.on("close", (code: number | null) => {
+      if (code !== 0) {
+        reject(new Error('Failed to get video duration'));
+        return;
+      }
+      
+      // Parse duration (format: HH:MM:SS or MM:SS or SS)
+      const durationStr = output.trim();
+      const parts = durationStr.split(':').map(Number);
+      let seconds = 0;
+      
+      if (parts.length === 3) {
+        seconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+      } else if (parts.length === 2) {
+        seconds = parts[0] * 60 + parts[1];
+      } else {
+        seconds = parts[0];
+      }
+      
+      resolve(seconds);
+    });
+  });
+}
+
+// Helper: AI - Find viral moments by sending YouTube URL directly to Gemini (NEW!)
+async function findViralMomentsFromURL(youtubeUrl: string, totalDuration: number): Promise<ViralSegment[]> {
+  try {
+    console.log(`🚀 Analyzing video directly from URL: ${youtubeUrl}`);
+    
+    const prompt = `Kamu adalah AI expert yang menganalisis konten video untuk menemukan momen-momen VIRAL.
+
+Analisa video YouTube ini dan temukan 3-5 momen PALING VIRAL yang memenuhi kriteria:
+- Memiliki emosi kuat (excitement, surprise, humor, dramatic, inspiring)
+- Konten engaging yang menarik perhatian
+- Cocok untuk viral di TikTok, Instagram Reels, YouTube Shorts
+- Punya hook kuat di awal segmen
+- Bisa standalone tanpa perlu konteks keseluruhan video
+- Hindari bagian intro/outro yang membosankan
+
+Durasi total video: ${Math.floor(totalDuration)} detik
+
+Berikan response dalam format JSON array (HANYA JSON, tanpa text lain):
+[
+  {
+    "startTime": 30,
+    "endTime": 75,
+    "duration": 45,
+    "reason": "Momen lucu dengan punchline kuat yang bikin ngakak",
+    "keywords": ["humor", "viral", "lucu"]
+  }
+]
+
+PENTING:
+- Setiap segmen 40-60 detik
+- startTime dan endTime dalam detik (integer)
+- duration = endTime - startTime
+- Pilih momen PALING MENARIK saja
+- Response HARUS valid JSON array`;
+
+    // Call Gemini with YouTube URL directly (using fileData.fileUri)
+    const contents = [{
+      parts: [
+        {
+          fileData: {
+            fileUri: youtubeUrl
+          }
+        },
+        { text: prompt }
+      ]
+    }];
+
+    const res = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents })
+    });
+
+    const responseText = await res.text();
+    
+    if (!res.ok) {
+      console.error('Gemini API Error:', responseText);
+      throw new Error(`Gemini API returned ${res.status}`);
+    }
+
+    const json = JSON.parse(responseText);
+    const aiResponse = json.candidates[0].content.parts[0].text;
+    console.log('AI Response:', aiResponse);
+
+    // Extract JSON from response
+    const jsonMatch = aiResponse.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) {
+      console.warn('AI did not return valid JSON, using fallback strategy');
+      return generateFallbackSegments(totalDuration);
+    }
+
+    const segments: ViralSegment[] = JSON.parse(jsonMatch[0]);
+    
+    // Validate and filter segments
+    const validSegments = segments.filter(s => 
+      s.startTime >= 0 && 
+      s.endTime <= totalDuration &&
+      s.duration >= 40 && 
+      s.duration <= 60 &&
+      s.endTime > s.startTime
+    );
+
+    if (validSegments.length === 0) {
+      console.warn('No valid segments from AI, using fallback');
+      return generateFallbackSegments(totalDuration);
+    }
+    
+    console.log(`✅ AI found ${validSegments.length} viral segments from URL`);
+    return validSegments;
+
+  } catch (error: any) {
+    console.error('AI Analysis error:', error);
+    console.log('Using fallback segment generation...');
+    return generateFallbackSegments(totalDuration);
+  }
+}
+
+// Helper: AI - Find viral moments with audio analysis (OLD METHOD)
 async function findViralMoments(audioPath: string, totalDuration: number): Promise<ViralSegment[]> {
   try {
     console.log(`Analyzing ${totalDuration}s of audio for viral moments...`);

@@ -325,6 +325,7 @@
         <div class="card">
             <div class="tabs">
                 <button class="tab active" onclick="switchTab('viral')">🔥 Viral Clipper AI</button>
+                <button class="tab" onclick="switchTab('viral-direct')">⚡ Viral Direct (Faster!)</button>
                 <button class="tab" onclick="switchTab('analyze')">🔍 Analisa Video</button>
                 <button class="tab" onclick="switchTab('trim')">✂️ Trim + Subtitle</button>
                 <button class="tab" onclick="switchTab('subtitle')">📝 Generate Subtitle</button>
@@ -375,7 +376,50 @@
                 </div>
             </div>
 
-            <!-- Tab 1: Analisa Video -->
+            <!-- Tab 1.5: Viral Direct (NEW - FASTER!) -->
+            <div id="viral-direct" class="tab-content">
+                <div class="info-box" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-left-color: #667eea;">
+                    <h4 style="color: white;">⚡ VIRAL DIRECT - Metode Tercepat!</h4>
+                    <p style="color: rgba(255,255,255,0.95);">
+                        <strong>🚀 2-3x LEBIH CEPAT!</strong> Gemini langsung menganalisa video dari URL tanpa perlu download + extract audio dulu.<br>
+                        <strong>💾 Hemat Storage:</strong> Hanya download 1x untuk trim & subtitle.<br>
+                        <strong>🎯 Sama Akurat:</strong> Gemini bisa "lihat" video + audio untuk deteksi momen viral!
+                    </p>
+                </div>
+
+                <form onsubmit="processViralVideoDirect(event)">
+                    <div class="form-group">
+                        <label for="viral-direct-url">🎬 YouTube URL</label>
+                        <input type="url" id="viral-direct-url" placeholder="https://www.youtube.com/watch?v=..." required>
+                    </div>
+                    <button type="submit" class="btn" id="viral-direct-btn" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                        ⚡ START DIRECT PROCESSING - Super Fast!
+                    </button>
+                </form>
+
+                <div class="loading" id="viral-direct-loading">
+                    <div class="spinner"></div>
+                    <p style="font-weight: bold; color: #667eea;">⚡ Processing dengan metode DIRECT...</p>
+                    <p style="color: #666; font-size: 14px; margin-top: 10px;">
+                        📏 Getting video info...<br>
+                        🤖 Gemini analyzing from URL (NO download needed!)...<br>
+                        ⬇️ Downloading video (1x only)...<br>
+                        ✂️ Trimming + adding subtitles...<br>
+                        <br>
+                        <strong style="color: #667eea;">⏱️ Estimated: 3-5 menit (2-3x lebih cepat!)</strong>
+                    </p>
+                </div>
+
+                <div class="error" id="viral-direct-error"></div>
+
+                <div class="result" id="viral-direct-result">
+                    <h3>🎉 Viral Clips Berhasil Dibuat (Direct Method)!</h3>
+                    <div id="viral-direct-summary"></div>
+                    <div id="viral-direct-clips"></div>
+                </div>
+            </div>
+
+            <!-- Tab 2: Analisa Video -->
             <div id="analyze" class="tab-content">
                 <div class="info-box">
                     <h4>Analisa Video YouTube</h4>
@@ -625,6 +669,135 @@
                                 <strong>🏷️ Keywords:</strong>
                                 <div class="tags-container">
                                     ${clip.keywords.map(k => `<span class="tag" style="background: #ff6b6b;">${k}</span>`).join('')}
+                                </div>
+                            </div>
+
+                            <div style="margin-top: 15px;">
+                                <a href="${clip.previewUrl}" target="_blank" class="download-btn" style="background: #2196F3;">
+                                    👁️ Preview Video
+                                </a>
+                                <a href="${clip.downloadUrl}" class="download-btn" style="background: #28a745;" download>
+                                    📥 Download Video
+                                </a>
+                            </div>
+
+                            <div class="video-preview" style="margin-top: 15px;">
+                                <video controls style="max-width: 100%;">
+                                    <source src="${clip.previewUrl}" type="video/mp4">
+                                    Browser Anda tidak mendukung video preview.
+                                </video>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                clipsDiv.innerHTML = clipsHtml;
+                result.classList.add('show');
+
+            } catch (err) {
+                // Handle timeout specifically
+                if (err.name === 'AbortError') {
+                    error.textContent = '❌ Proses memakan waktu terlalu lama (>15 menit). Video mungkin terlalu panjang atau koneksi bermasalah.';
+                } else {
+                    error.textContent = '❌ ' + err.message;
+                }
+                error.classList.add('show');
+            } finally {
+                loading.classList.remove('show');
+                btn.disabled = false;
+            }
+        }
+
+        async function processViralVideoDirect(event) {
+            event.preventDefault();
+            
+            const url = document.getElementById('viral-direct-url').value;
+            const btn = document.getElementById('viral-direct-btn');
+            const loading = document.getElementById('viral-direct-loading');
+            const result = document.getElementById('viral-direct-result');
+            const error = document.getElementById('viral-direct-error');
+            const summaryDiv = document.getElementById('viral-direct-summary');
+            const clipsDiv = document.getElementById('viral-direct-clips');
+
+            // Reset
+            result.classList.remove('show');
+            error.classList.remove('show');
+            loading.classList.add('show');
+            btn.disabled = true;
+
+            try {
+                // Create abort controller for timeout (15 minutes)
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 15 * 60 * 1000);
+
+                const response = await fetch(`${API_URL}/process-youtube-direct`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url }),
+                    signal: controller.signal
+                });
+
+                clearTimeout(timeoutId);
+
+                console.log('Response status:', response.status);
+                console.log('Response headers:', [...response.headers.entries()]);
+
+                // Check if response is JSON before parsing
+                const contentType = response.headers.get('content-type');
+                console.log('Content-Type:', contentType);
+                
+                if (!contentType || !contentType.includes('application/json')) {
+                    const responseText = await response.text();
+                    console.error('Non-JSON response:', responseText.substring(0, 500));
+                    throw new Error('Server sedang memproses atau mengalami error. Coba lagi dalam beberapa saat.');
+                }
+
+                const data = await response.json();
+                console.log('Response data:', data);
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Terjadi kesalahan');
+                }
+
+                // Show summary
+                summaryDiv.innerHTML = `
+                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 8px; margin-bottom: 20px; color: white;">
+                        <h4 style="color: white; margin-bottom: 10px;">🎯 Summary (DIRECT METHOD)</h4>
+                        <p><strong>Job ID:</strong> ${data.jobId}</p>
+                        <p><strong>Total Viral Clips:</strong> ${data.totalClips} clips</p>
+                        <p><strong>YouTube URL:</strong> <a href="${url}" target="_blank" style="color: #fff; text-decoration: underline;">${url}</a></p>
+                        <p style="margin-top: 10px; font-size: 14px; opacity: 0.9;">
+                            ⚡ Processed dengan metode DIRECT - 2-3x lebih cepat!<br>
+                            ✅ AI berhasil menemukan ${data.totalClips} momen viral (40-60 detik) dengan subtitle tertanam!
+                        </p>
+                    </div>
+                `;
+
+                // Show clips
+                let clipsHtml = '<h3 style="margin-top: 20px;">🔥 Viral Clips</h3>';
+                
+                data.clips.forEach((clip, index) => {
+                    clipsHtml += `
+                        <div class="clip-card" style="border-left: 4px solid #667eea;">
+                            <h4>🎬 Clip ${clip.clipNumber} - ${clip.reason}</h4>
+                            
+                            <div class="metadata-grid">
+                                <div class="metadata-item">
+                                    <strong>⏱️ Durasi:</strong> ${clip.duration} detik<br>
+                                    <strong>🕐 Waktu:</strong> ${clip.startTime} → ${clip.endTime}
+                                </div>
+                                <div class="metadata-item">
+                                    <strong>📁 File:</strong> ${clip.filename}<br>
+                                    <strong>🎯 Viral Factor:</strong> ${clip.reason}
+                                </div>
+                            </div>
+
+                            <div style="margin-top: 15px;">
+                                <strong>🏷️ Keywords:</strong>
+                                <div class="tags-container">
+                                    ${clip.keywords.map(k => `<span class="tag" style="background: #667eea;">${k}</span>`).join('')}
                                 </div>
                             </div>
 

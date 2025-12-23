@@ -1,0 +1,17 @@
+# Netscape HTTP Cookie File
+# This is a generated file! Do not edit.
+# This file should be generated from your browser
+# 
+# HOW TO GENERATE:
+# 1. Install "Get cookies.txt LOCALLY" extension in Chrome
+# 2. Login to YouTube
+# 3. Navigate to https://www.youtube.com/robots.txt
+# 4. Click extension icon and export cookies for youtube.com
+# 5. Save as youtube_cookies.txt in this directory
+# 6. Make sure this file is in .gitignore (it already is!)
+#
+# IMPORTANT: Never commit real cookies to git!
+
+# Example format (DO NOT USE THIS - GET YOUR OWN):
+# .youtube.com	TRUE	/	TRUE	1234567890	VISITOR_INFO1_LIVE	xxxxxxxxxxxxx
+# .youtube.com	TRUE	/	FALSE	1234567890	PREF	xxxxxxxxxxxxx
