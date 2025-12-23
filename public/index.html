@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Video Clipper with AI</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .tab {
+            padding: 12px 24px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            color: #666;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+            font-weight: bold;
+        }
+
+        .tab:hover {
+            color: #667eea;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        input[type="text"],
+        input[type="url"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .time-inputs {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 14px 28px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            width: 100%;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .result {
+            display: none;
+            margin-top: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .result.show {
+            display: block;
+        }
+
+        .result h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+
+        .result-content {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .video-preview {
+            margin-top: 20px;
+        }
+
+        .video-preview video {
+            width: 100%;
+            max-width: 800px;
+            border-radius: 8px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+
+        .download-btn {
+            display: inline-block;
+            background: #28a745;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            text-decoration: none;
+            margin-right: 10px;
+            margin-top: 10px;
+            transition: background 0.3s;
+        }
+
+        .download-btn:hover {
+            background: #218838;
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            display: none;
+        }
+
+        .error.show {
+            display: block;
+        }
+
+        .info-box {
+            background: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+
+        .info-box h4 {
+            color: #2196F3;
+            margin-bottom: 8px;
+        }
+
+        .info-box p {
+            color: #555;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .clip-card {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+
+        .clip-card h4 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .metadata-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .metadata-item {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 6px;
+        }
+
+        .metadata-item strong {
+            color: #667eea;
+        }
+
+        .virality-score {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+            color: white;
+        }
+
+        .virality-high {
+            background: #28a745;
+        }
+
+        .virality-medium {
+            background: #ffc107;
+        }
+
+        .virality-low {
+            background: #dc3545;
+        }
+
+        .tags-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 5px;
+        }
+
+        .tag {
+            background: #667eea;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎬 YouTube Video Clipper AI</h1>
+            <p>Analisa, Potong, dan Generate Subtitle untuk Video YouTube dengan AI</p>
+        </div>
+
+        <div class="card">
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('viral')">🔥 Viral Clipper AI</button>
+                <button class="tab" onclick="switchTab('analyze')">🔍 Analisa Video</button>
+                <button class="tab" onclick="switchTab('trim')">✂️ Trim + Subtitle</button>
+                <button class="tab" onclick="switchTab('subtitle')">📝 Generate Subtitle</button>
+                <button class="tab" onclick="switchTab('split')">🎞️ Split Video Auto</button>
+            </div>
+
+            <!-- Tab 0: Viral Clipper AI (NEW) -->
+            <div id="viral" class="tab-content active">
+                <div class="info-box" style="background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%); color: white; border-left-color: #ff6b6b;">
+                    <h4 style="color: white;">🔥 VIRAL CLIPPER AI - Auto Detect Momen Viral!</h4>
+                    <p style="color: rgba(255,255,255,0.95);">
+                        AI akan otomatis menganalisa video YouTube, mencari 3-5 momen paling VIRAL (40-60 detik), 
+                        memotong video, dan menambahkan subtitle yang engaging! Perfect untuk TikTok, Reels, Shorts!
+                    </p>
+                </div>
+
+                <form onsubmit="processViralVideo(event)">
+                    <div class="form-group">
+                        <label for="viral-url">🎬 YouTube URL</label>
+                        <input type="url" id="viral-url" placeholder="https://www.youtube.com/watch?v=..." required>
+                    </div>
+                    <button type="submit" class="btn" id="viral-btn" style="background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);">
+                        🚀 AUTO VIRAL CLIPPER - Start Processing!
+                    </button>
+                </form>
+
+                <div class="loading" id="viral-loading">
+                    <div class="spinner"></div>
+                    <p style="font-weight: bold; color: #667eea;">🤖 AI sedang bekerja keras...</p>
+                    <p style="color: #666; font-size: 14px; margin-top: 10px;">
+                        ⬇️ Downloading video...<br>
+                        🎵 Extracting audio...<br>
+                        🤖 AI analyzing viral moments...<br>
+                        ✂️ Trimming clips...<br>
+                        📝 Generating subtitles...<br>
+                        🔥 Burning subtitles to video...<br>
+                        <br>
+                        <strong>Proses ini memakan waktu 3-10 menit tergantung durasi video. Mohon tunggu...</strong>
+                    </p>
+                </div>
+
+                <div class="error" id="viral-error"></div>
+
+                <div class="result" id="viral-result">
+                    <h3>🎉 Viral Clips Berhasil Dibuat!</h3>
+                    <div id="viral-summary"></div>
+                    <div id="viral-clips"></div>
+                </div>
+            </div>
+
+            <!-- Tab 1: Analisa Video -->
+            <div id="analyze" class="tab-content">
+                <div class="info-box">
+                    <h4>Analisa Video YouTube</h4>
+                    <p>Ekstrak topik utama, kategori, dan ringkasan dari audio/percakapan dalam video menggunakan Gemini 1.5 Pro</p>
+                </div>
+
+                <form onsubmit="analyzeVideo(event)">
+                    <div class="form-group">
+                        <label for="analyze-url">YouTube URL</label>
+                        <input type="url" id="analyze-url" placeholder="https://www.youtube.com/watch?v=..." required>
+                    </div>
+                    <button type="submit" class="btn" id="analyze-btn">Analisa Video</button>
+                </form>
+
+                <div class="loading" id="analyze-loading">
+                    <div class="spinner"></div>
+                    <p>Menganalisa video... Mohon tunggu</p>
+                </div>
+
+                <div class="error" id="analyze-error"></div>
+
+                <div class="result" id="analyze-result">
+                    <h3>📊 Hasil Analisa</h3>
+                    <div class="result-content" id="analyze-content"></div>
+                </div>
+            </div>
+
+            <!-- Tab 2: Trim + Subtitle -->
+            <div id="trim" class="tab-content">
+                <div class="info-box">
+                    <h4>Trim Video dengan Subtitle Tertanam</h4>
+                    <p>Download video YouTube, generate subtitle dengan AI, lalu potong dan embed subtitle ke dalam video</p>
+                </div>
+
+                <form onsubmit="trimVideo(event)">
+                    <div class="form-group">
+                        <label for="trim-url">YouTube URL</label>
+                        <input type="url" id="trim-url" placeholder="https://www.youtube.com/watch?v=..." required>
+                    </div>
+                    <div class="time-inputs">
+                        <div class="form-group">
+                            <label for="start-time">Waktu Mulai (HH:MM:SS)</label>
+                            <input type="text" id="start-time" placeholder="00:00:10" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="end-time">Waktu Akhir (HH:MM:SS)</label>
+                            <input type="text" id="end-time" placeholder="00:00:30" required>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn" id="trim-btn">Trim Video + Generate Subtitle</button>
+                </form>
+
+                <div class="loading" id="trim-loading">
+                    <div class="spinner"></div>
+                    <p>Memproses video... Ini mungkin memakan waktu beberapa menit</p>
+                </div>
+
+                <div class="error" id="trim-error"></div>
+
+                <div class="result" id="trim-result">
+                    <h3>✅ Video Berhasil Diproses!</h3>
+                    <div id="trim-download"></div>
+                    <div class="video-preview" id="trim-preview"></div>
+                </div>
+            </div>
+
+            <!-- Tab 3: Generate Subtitle -->
+            <div id="subtitle" class="tab-content">
+                <div class="info-box">
+                    <h4>Generate Subtitle dari YouTube</h4>
+                    <p>Transcribe audio dari video YouTube menjadi file subtitle (SRT) menggunakan AI</p>
+                </div>
+
+                <form onsubmit="generateSubtitle(event)">
+                    <div class="form-group">
+                        <label for="subtitle-url">YouTube URL</label>
+                        <input type="url" id="subtitle-url" placeholder="https://www.youtube.com/watch?v=..." required>
+                    </div>
+                    <button type="submit" class="btn" id="subtitle-btn">Generate Subtitle</button>
+                </form>
+
+                <div class="loading" id="subtitle-loading">
+                    <div class="spinner"></div>
+                    <p>Generating subtitle... Mohon tunggu</p>
+                </div>
+
+                <div class="error" id="subtitle-error"></div>
+
+                <div class="result" id="subtitle-result">
+                    <h3>📝 Subtitle Berhasil Di-generate!</h3>
+                    <div id="subtitle-download"></div>
+                    <div class="result-content" id="subtitle-preview"></div>
+                </div>
+            </div>
+
+            <!-- Tab 4: Split Video Auto -->
+            <div id="split" class="tab-content">
+                <div class="info-box">
+                    <h4>🎞️ Split Video Panjang Menjadi Banyak Video Pendek</h4>
+                    <p>Pecah 1 video YouTube panjang menjadi banyak clip pendek dengan subtitle tertanam. AI akan auto-generate judul, tags, dan analisa viralitas untuk setiap clip!</p>
+                </div>
+
+                <form onsubmit="splitVideo(event)">
+                    <div class="form-group">
+                        <label for="split-url">YouTube URL</label>
+                        <input type="url" id="split-url" placeholder="https://www.youtube.com/watch?v=..." required>
+                    </div>
+                    <div class="form-group">
+                        <label for="clip-duration">Durasi Per Clip (detik)</label>
+                        <input type="number" id="clip-duration" placeholder="60" value="60" min="10" max="300" required>
+                        <small style="color: #666; display: block; margin-top: 5px;">Default: 60 detik (1 menit per clip)</small>
+                    </div>
+                    <button type="submit" class="btn" id="split-btn">Split Video + Generate Metadata AI</button>
+                </form>
+
+                <div class="loading" id="split-loading">
+                    <div class="spinner"></div>
+                    <p>Memproses video... Ini akan memakan waktu cukup lama. Mohon tunggu...</p>
+                    <p style="color: #666; font-size: 14px; margin-top: 10px;">
+                        Proses: Download → Split → Generate Subtitle → Analisa AI untuk setiap clip
+                    </p>
+                </div>
+
+                <div class="error" id="split-error"></div>
+
+                <div class="result" id="split-result">
+                    <h3>🎉 Video Berhasil Dipecah!</h3>
+                    <div id="split-summary"></div>
+                    <div id="split-clips"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = window.location.origin;
+
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+
+            // Show selected tab
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+
+            // Hide all results
+            document.querySelectorAll('.result').forEach(result => {
+                result.classList.remove('show');
+            });
+            document.querySelectorAll('.error').forEach(error => {
+                error.classList.remove('show');
+            });
+        }
+
+        // NEW: Viral Clipper AI Function
+        async function processViralVideo(event) {
+            event.preventDefault();
+            
+            const url = document.getElementById('viral-url').value;
+            const btn = document.getElementById('viral-btn');
+            const loading = document.getElementById('viral-loading');
+            const result = document.getElementById('viral-result');
+            const error = document.getElementById('viral-error');
+            const summaryDiv = document.getElementById('viral-summary');
+            const clipsDiv = document.getElementById('viral-clips');
+
+            // Reset
+            result.classList.remove('show');
+            error.classList.remove('show');
+            loading.classList.add('show');
+            btn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_URL}/process-youtube`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Terjadi kesalahan');
+                }
+
+                // Show summary
+                summaryDiv.innerHTML = `
+                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 8px; margin-bottom: 20px; color: white;">
+                        <h4 style="color: white; margin-bottom: 10px;">🎯 Summary</h4>
+                        <p><strong>Job ID:</strong> ${data.jobId}</p>
+                        <p><strong>Total Viral Clips:</strong> ${data.totalClips} clips</p>
+                        <p><strong>YouTube URL:</strong> <a href="${url}" target="_blank" style="color: #fff; text-decoration: underline;">${url}</a></p>
+                        <p style="margin-top: 10px; font-size: 14px; opacity: 0.9;">
+                            ✅ AI berhasil menemukan ${data.totalClips} momen viral (40-60 detik) dengan subtitle tertanam!
+                        </p>
+                    </div>
+                `;
+
+                // Show clips
+                let clipsHtml = '<h3 style="margin-top: 20px;">🔥 Viral Clips</h3>';
+                
+                data.clips.forEach((clip, index) => {
+                    clipsHtml += `
+                        <div class="clip-card" style="border-left: 4px solid #ff6b6b;">
+                            <h4>🎬 Clip ${clip.clipNumber} - ${clip.reason}</h4>
+                            
+                            <div class="metadata-grid">
+                                <div class="metadata-item">
+                                    <strong>⏱️ Durasi:</strong> ${clip.duration} detik<br>
+                                    <strong>🕐 Waktu:</strong> ${clip.startTime} → ${clip.endTime}
+                                </div>
+                                <div class="metadata-item">
+                                    <strong>📁 File:</strong> ${clip.filename}<br>
+                                    <strong>🎯 Viral Factor:</strong> ${clip.reason}
+                                </div>
+                            </div>
+
+                            <div style="margin-top: 15px;">
+                                <strong>🏷️ Keywords:</strong>
+                                <div class="tags-container">
+                                    ${clip.keywords.map(k => `<span class="tag" style="background: #ff6b6b;">${k}</span>`).join('')}
+                                </div>
+                            </div>
+
+                            <div style="margin-top: 15px;">
+                                <a href="${clip.previewUrl}" target="_blank" class="download-btn" style="background: #2196F3;">
+                                    👁️ Preview Video
+                                </a>
+                                <a href="${clip.downloadUrl}" class="download-btn" style="background: #28a745;" download>
+                                    📥 Download Video
+                                </a>
+                            </div>
+
+                            <div class="video-preview" style="margin-top: 15px;">
+                                <video controls style="max-width: 100%;">
+                                    <source src="${clip.previewUrl}" type="video/mp4">
+                                    Browser Anda tidak mendukung video preview.
+                                </video>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                clipsDiv.innerHTML = clipsHtml;
+                result.classList.add('show');
+
+            } catch (err) {
+                error.textContent = '❌ ' + err.message;
+                error.classList.add('show');
+            } finally {
+                loading.classList.remove('show');
+                btn.disabled = false;
+            }
+        }
+
+        async function analyzeVideo(event) {
+            event.preventDefault();
+            
+            const url = document.getElementById('analyze-url').value;
+            const btn = document.getElementById('analyze-btn');
+            const loading = document.getElementById('analyze-loading');
+            const result = document.getElementById('analyze-result');
+            const error = document.getElementById('analyze-error');
+            const content = document.getElementById('analyze-content');
+
+            // Reset
+            result.classList.remove('show');
+            error.classList.remove('show');
+            loading.classList.add('show');
+            btn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_URL}/analyze-youtube`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Terjadi kesalahan');
+                }
+
+                content.textContent = data.analysis;
+                result.classList.add('show');
+
+            } catch (err) {
+                error.textContent = '❌ ' + err.message;
+                error.classList.add('show');
+            } finally {
+                loading.classList.remove('show');
+                btn.disabled = false;
+            }
+        }
+
+        async function trimVideo(event) {
+            event.preventDefault();
+            
+            const url = document.getElementById('trim-url').value;
+            const startTime = document.getElementById('start-time').value;
+            const endTime = document.getElementById('end-time').value;
+            const btn = document.getElementById('trim-btn');
+            const loading = document.getElementById('trim-loading');
+            const result = document.getElementById('trim-result');
+            const error = document.getElementById('trim-error');
+            const downloadDiv = document.getElementById('trim-download');
+            const previewDiv = document.getElementById('trim-preview');
+
+            // Reset
+            result.classList.remove('show');
+            error.classList.remove('show');
+            loading.classList.add('show');
+            btn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_URL}/trim-youtube-with-subtitle`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url, startTime, endTime })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Terjadi kesalahan');
+                }
+
+                // Show download buttons
+                downloadDiv.innerHTML = `
+                    <a href="${API_URL}/download/${data.outputFile}" class="download-btn" download>
+                        📥 Download Video
+                    </a>
+                    <a href="${API_URL}/subtitle/${data.subtitleFile}" class="download-btn" download>
+                        📄 Download Subtitle
+                    </a>
+                `;
+
+                // Show video preview
+                previewDiv.innerHTML = `
+                    <h4>Preview Video:</h4>
+                    <video controls>
+                        <source src="${API_URL}/download/${data.outputFile}" type="video/mp4">
+                        Browser Anda tidak mendukung video preview.
+                    </video>
+                `;
+
+                result.classList.add('show');
+
+            } catch (err) {
+                error.textContent = '❌ ' + err.message;
+                error.classList.add('show');
+            } finally {
+                loading.classList.remove('show');
+                btn.disabled = false;
+            }
+        }
+
+        async function generateSubtitle(event) {
+            event.preventDefault();
+            
+            const url = document.getElementById('subtitle-url').value;
+            const btn = document.getElementById('subtitle-btn');
+            const loading = document.getElementById('subtitle-loading');
+            const result = document.getElementById('subtitle-result');
+            const error = document.getElementById('subtitle-error');
+            const downloadDiv = document.getElementById('subtitle-download');
+            const previewDiv = document.getElementById('subtitle-preview');
+
+            // Reset
+            result.classList.remove('show');
+            error.classList.remove('show');
+            loading.classList.add('show');
+            btn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_URL}/youtube-subtitle`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Terjadi kesalahan');
+                }
+
+                // Show download button
+                downloadDiv.innerHTML = `
+                    <a href="${API_URL}/subtitle/${data.subtitleFile}" class="download-btn" download>
+                        📄 Download Subtitle (SRT)
+                    </a>
+                `;
+
+                // Show preview
+                previewDiv.textContent = data.preview;
+
+                result.classList.add('show');
+
+            } catch (err) {
+                error.textContent = '❌ ' + err.message;
+                error.classList.add('show');
+            } finally {
+                loading.classList.remove('show');
+                btn.disabled = false;
+            }
+        }
+
+        async function splitVideo(event) {
+            event.preventDefault();
+            
+            const url = document.getElementById('split-url').value;
+            const clipDuration = parseInt(document.getElementById('clip-duration').value);
+            const btn = document.getElementById('split-btn');
+            const loading = document.getElementById('split-loading');
+            const result = document.getElementById('split-result');
+            const error = document.getElementById('split-error');
+            const summaryDiv = document.getElementById('split-summary');
+            const clipsDiv = document.getElementById('split-clips');
+
+            // Reset
+            result.classList.remove('show');
+            error.classList.remove('show');
+            loading.classList.add('show');
+            btn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_URL}/split-video-auto`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url, clipDuration })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Terjadi kesalahan');
+                }
+
+                // Show summary
+                summaryDiv.innerHTML = `
+                    <div style="background: #e7f3ff; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                        <h4 style="color: #2196F3; margin-bottom: 10px;">📊 Summary</h4>
+                        <p><strong>Total Clips:</strong> ${data.totalClips}</p>
+                        <p><strong>Durasi Per Clip:</strong> ${data.clipDuration} detik</p>
+                        <p><strong>YouTube URL:</strong> <a href="${data.youtubeUrl}" target="_blank">${data.youtubeUrl}</a></p>
+                    </div>
+                `;
+
+                // Show clips
+                let clipsHtml = '<h3 style="margin-top: 20px;">📹 Video Clips</h3>';
+                
+                data.clips.forEach((clip, index) => {
+                    const viralityClass = clip.metadata.viralityScore >= 70 ? 'virality-high' : 
+                                         clip.metadata.viralityScore >= 40 ? 'virality-medium' : 'virality-low';
+                    
+                    clipsHtml += `
+                        <div class="clip-card">
+                            <h4>🎬 Clip ${clip.clipNumber}: ${clip.metadata.title}</h4>
+                            
+                            <div class="metadata-grid">
+                                <div class="metadata-item">
+                                    <strong>Durasi:</strong> ${clip.duration} detik<br>
+                                    <strong>Waktu:</strong> ${clip.startTime} - ${clip.endTime}
+                                </div>
+                                <div class="metadata-item">
+                                    <strong>Kategori:</strong> ${clip.metadata.category}<br>
+                                    <strong>Target Audience:</strong> ${clip.metadata.targetAudience}
+                                </div>
+                            </div>
+
+                            <div style="margin-top: 15px;">
+                                <strong>Deskripsi:</strong>
+                                <p style="color: #666; margin-top: 5px;">${clip.metadata.description}</p>
+                            </div>
+
+                            <div style="margin-top: 15px;">
+                                <strong>Virality Score:</strong>
+                                <span class="virality-score ${viralityClass}">${clip.metadata.viralityScore}/100</span>
+                                <p style="color: #666; margin-top: 5px; font-size: 14px;">${clip.metadata.viralityAnalysis}</p>
+                            </div>
+
+                            <div style="margin-top: 15px;">
+                                <strong>Platform Terbaik:</strong>
+                                <div class="tags-container">
+                                    ${clip.metadata.bestPlatform.map(p => `<span class="tag">${p}</span>`).join('')}
+                                </div>
+                            </div>
+
+                            <div style="margin-top: 15px;">
+                                <strong>Tags:</strong>
+                                <div class="tags-container">
+                                    ${clip.metadata.tags.map(t => `<span class="tag">${t}</span>`).join('')}
+                                </div>
+                            </div>
+
+                            <div style="margin-top: 15px;">
+                                <strong>Suggested Hashtags:</strong>
+                                <div class="tags-container">
+                                    ${clip.metadata.suggestedHashtags.map(h => `<span class="tag">${h}</span>`).join('')}
+                                </div>
+                            </div>
+
+                            <div style="margin-top: 15px;">
+                                <a href="${API_URL}/download/${clip.filename}" class="download-btn" download>
+                                    📥 Download Video
+                                </a>
+                                <a href="${API_URL}/subtitle/${clip.subtitleFile}" class="download-btn" download>
+                                    📄 Download Subtitle
+                                </a>
+                            </div>
+
+                            <div class="video-preview" style="margin-top: 15px;">
+                                <video controls style="max-width: 100%;">
+                                    <source src="${API_URL}/download/${clip.filename}" type="video/mp4">
+                                    Browser Anda tidak mendukung video preview.
+                                </video>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                clipsDiv.innerHTML = clipsHtml;
+                result.classList.add('show');
+
+            } catch (err) {
+                error.textContent = '❌ ' + err.message;
+                error.classList.add('show');
+            } finally {
+                loading.classList.remove('show');
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
