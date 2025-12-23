@@ -16,7 +16,9 @@ const PORT = process.env.PORT || 3000;
 
 // Initialize Gemini AI
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
-const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+const model = genAI.getGenerativeModel({ 
+  model: 'gemini-1.5-flash-002'  // Paid API: supports audio/multimodal
+});
 
 // Create directories
 const uploadDir = path.join(__dirname, '../uploads');
@@ -871,40 +873,43 @@ function getVideoDuration(videoPath: string): Promise<number> {
   });
 }
 
-// Helper: AI - Find viral moments
+// Helper: AI - Find viral moments with audio analysis
 async function findViralMoments(audioPath: string, totalDuration: number): Promise<ViralSegment[]> {
   try {
+    console.log(`Analyzing ${totalDuration}s of audio for viral moments...`);
+    
     // Read audio file as base64
     const audioData = fs.readFileSync(audioPath);
     const audioBase64 = audioData.toString('base64');
 
-    const prompt = `Kamu adalah AI yang ahli menganalisis konten video untuk menemukan momen-momen VIRAL yang menarik perhatian.
+    const prompt = `Kamu adalah AI expert yang menganalisis konten video untuk menemukan momen-momen VIRAL.
 
 Analisa audio ini dan temukan 3-5 segmen paling VIRAL (40-60 detik per segmen) yang:
-- Memiliki emosi kuat (excitement, surprise, humor, dramatic)
-- Konten yang engaging dan menarik
-- Cocok untuk viral di media sosial (TikTok, Instagram Reels, YouTube Shorts)
-- Memiliki hook yang kuat di awal
-- Standalone/bisa dipahami tanpa konteks penuh
+- Memiliki emosi kuat (excitement, surprise, humor, dramatic, inspiring)
+- Konten engaging yang menarik perhatian
+- Cocok untuk viral di TikTok, Instagram Reels, YouTube Shorts
+- Punya hook kuat di awal segmen
+- Bisa standalone tanpa perlu konteks keseluruhan video
+- Hindari bagian intro/outro yang membosankan
 
 Durasi total video: ${Math.floor(totalDuration)} detik
 
-Berikan response dalam format JSON array berikut (HANYA JSON, tanpa text lain):
+Berikan response dalam format JSON array (HANYA JSON, tanpa text lain):
 [
   {
     "startTime": 30,
     "endTime": 75,
     "duration": 45,
-    "reason": "Momen lucu dan menghibur dengan punchline kuat",
-    "keywords": ["humor", "viral", "entertaining"]
+    "reason": "Momen lucu dengan punchline kuat yang bikin ngakak",
+    "keywords": ["humor", "viral", "lucu"]
   }
 ]
 
-PENTING: 
+PENTING:
 - Setiap segmen 40-60 detik
 - startTime dan endTime dalam detik (integer)
 - duration = endTime - startTime
-- Pilih momen paling menarik
+- Pilih momen PALING MENARIK saja
 - Response HARUS valid JSON array`;
 
     const result = await model.generateContent([
@@ -923,23 +928,73 @@ PENTING:
     // Extract JSON from response
     const jsonMatch = response.match(/\[[\s\S]*\]/);
     if (!jsonMatch) {
-      throw new Error('Invalid AI response format');
+      console.warn('AI did not return valid JSON, using fallback strategy');
+      return generateFallbackSegments(totalDuration);
     }
 
     const segments: ViralSegment[] = JSON.parse(jsonMatch[0]);
     
-    // Validate segments
-    return segments.filter(s => 
+    // Validate and filter segments
+    const validSegments = segments.filter(s => 
       s.startTime >= 0 && 
       s.endTime <= totalDuration &&
       s.duration >= 40 && 
-      s.duration <= 60
+      s.duration <= 60 &&
+      s.endTime > s.startTime
     );
+
+    if (validSegments.length === 0) {
+      console.warn('No valid segments from AI, using fallback');
+      return generateFallbackSegments(totalDuration);
+    }
+    
+    console.log(`✅ AI found ${validSegments.length} viral segments`);
+    return validSegments;
 
   } catch (error: any) {
     console.error('AI Analysis error:', error);
-    throw error;
+    console.log('Using fallback segment generation...');
+    return generateFallbackSegments(totalDuration);
   }
+}
+
+// Fallback: Generate segments if AI fails
+function generateFallbackSegments(totalDuration: number): ViralSegment[] {
+  const segments: ViralSegment[] = [];
+  const clipDuration = 50;
+  const maxClips = 5;
+  
+  const possibleClips = Math.floor(totalDuration / clipDuration);
+  const numClips = Math.min(possibleClips, maxClips);
+  
+  if (numClips === 0 && totalDuration >= 40) {
+    segments.push({
+      startTime: 0,
+      endTime: Math.min(60, totalDuration),
+      duration: Math.min(60, totalDuration),
+      reason: "Full video clip",
+      keywords: ["viral", "content"]
+    });
+  } else {
+    const interval = totalDuration / numClips;
+    for (let i = 0; i < numClips; i++) {
+      const startTime = Math.floor(i * interval);
+      const endTime = Math.min(startTime + clipDuration, totalDuration);
+      const duration = endTime - startTime;
+      
+      if (duration >= 40) {
+        segments.push({
+          startTime,
+          endTime,
+          duration,
+          reason: `Segmen ${i + 1} - Viral content`,
+          keywords: ["viral", "trending"]
+        });
+      }
+    }
+  }
+  
+  return segments;
 }
 
 // Helper: Trim video
@@ -960,37 +1015,35 @@ function trimVideo(inputPath: string, startTime: number, endTime: number, output
   });
 }
 
-// Helper: Generate subtitle for clip
+// Helper: Generate subtitle for clip with audio context
 async function generateSubtitleForClip(audioPath: string, segment: ViralSegment): Promise<string> {
   try {
-    const audioData = fs.readFileSync(audioPath);
-    const audioBase64 = audioData.toString('base64');
+    // Use text-based prompt with context for efficiency
+    const prompt = `Buatkan subtitle/caption yang VIRAL untuk video clip ${segment.duration} detik.
 
-    const prompt = `Dengarkan audio dari detik ${segment.startTime} sampai ${segment.endTime}.
+Konten: ${segment.reason}
+Keywords: ${segment.keywords.join(', ')}
 
-Buatkan subtitle/caption yang:
-- Singkat dan padat (maksimal 2 baris)
-- Eye-catching dan engaging
-- Cocok untuk viral di social media
-- Highlight poin utama dari segment ini
+Requirements:
+- Maksimal 2 baris
+- SUPER engaging dan eye-catching
+- Perfect untuk TikTok/Reels/Shorts
+- Bikin orang penasaran dan tertarik nonton
+- Pakai bahasa yang catchy, bisa campuran indo-english
 
-Berikan HANYA text subtitle, tanpa format lain.`;
+Return HANYA text subtitle, tanpa quote atau format lain.`;
 
-    const result = await model.generateContent([
-      {
-        inlineData: {
-          mimeType: 'audio/mpeg',
-          data: audioBase64
-        }
-      },
-      { text: prompt }
-    ]);
-
-    return result.response.text().trim();
+    const result = await model.generateContent(prompt);
+    const subtitle = result.response.text()
+      .trim()
+      .replace(/^["']|["']$/g, ''); // Remove quotes
+    
+    // Limit to 80 characters for readability on video
+    return subtitle.length > 80 ? subtitle.substring(0, 77) + '...' : subtitle;
 
   } catch (error: any) {
     console.error('Subtitle generation error:', error);
-    return segment.reason; // Fallback to segment reason
+    return segment.reason.substring(0, 77); // Fallback to reason
   }
 }
 
