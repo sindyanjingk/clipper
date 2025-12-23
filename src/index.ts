@@ -404,9 +404,8 @@ app.post('/process-youtube', express.json(), async (req: Request, res: Response)
         `${jobId}-clip-${i + 1}`
       );
 
-      // Extract audio from this specific clip
-      const clipAudioPath = path.join(outputDir, `${jobId}-clip-${i + 1}-audio.mp3`);
-      await extractAudio(clippedVideo, clipAudioPath);
+      // Extract audio from this specific clip for transcription
+      const clipAudioPath = await extractAudioFromClip(clippedVideo, `${jobId}-clip-${i + 1}`);
 
       // Transcribe audio to text (speech-to-text)
       const subtitleText = await transcribeAudioToText(clipAudioPath);
@@ -514,6 +513,21 @@ function downloadYouTubeVideo(url: string, jobId: string): Promise<string> {
 function extractAudio(videoPath: string, jobId: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const audioPath = path.join(downloadDir, `${jobId}-audio.mp3`);
+
+    ffmpeg(videoPath)
+      .output(audioPath)
+      .noVideo()
+      .audioCodec('libmp3lame')
+      .on('end', () => resolve(audioPath))
+      .on('error', (err) => reject(err))
+      .run();
+  });
+}
+
+// Helper: Extract audio from clip (for transcription)
+function extractAudioFromClip(videoPath: string, clipId: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const audioPath = path.join(outputDir, `${clipId}-audio.mp3`);
 
     ffmpeg(videoPath)
       .output(audioPath)
