@@ -20,6 +20,7 @@ const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/
 
 // serve static folder
 app.use("/downloads", express.static(path.resolve("downloads")));
+app.use("/output", express.static(path.resolve("output")));
 
 // Helper: Call Gemini API
 async function callGeminiAPI(prompt: string, audioBase64?: string): Promise<string> {
@@ -43,19 +44,39 @@ async function callGeminiAPI(prompt: string, audioBase64?: string): Promise<stri
     });
   }
 
-  const res = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contents })
-  });
+  try {
+    const res = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents })
+    });
 
-  if (!res.ok) {
-    const error = await res.text();
-    throw new Error(`Gemini API Error: ${error}`);
+    const responseText = await res.text();
+    
+    if (!res.ok) {
+      console.error('Gemini API Error:', responseText);
+      throw new Error(`Gemini API returned ${res.status}: ${responseText.substring(0, 200)}`);
+    }
+
+    // Parse JSON response
+    let json: any;
+    try {
+      json = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error('Failed to parse Gemini response:', responseText.substring(0, 500));
+      throw new Error('Gemini API returned invalid JSON');
+    }
+
+    if (!json.candidates || !json.candidates[0] || !json.candidates[0].content || !json.candidates[0].content.parts || !json.candidates[0].content.parts[0]) {
+      console.error('Unexpected Gemini response structure:', JSON.stringify(json).substring(0, 500));
+      throw new Error('Gemini API returned unexpected response structure');
+    }
+
+    return json.candidates[0].content.parts[0].text;
+  } catch (error: any) {
+    console.error('callGeminiAPI error:', error.message);
+    throw error;
   }
-
-  const json: any = await res.json();
-  return json.candidates[0].content.parts[0].text;
 }
 
 // Create directories
