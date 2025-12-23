@@ -3,7 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import ffmpeg from 'fluent-ffmpeg';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import fetch from 'node-fetch';
 import dotenv from 'dotenv';
 import { spawn } from 'child_process';
 import crypto from 'crypto';
@@ -14,11 +14,46 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Initialize Gemini AI
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
-const model = genAI.getGenerativeModel({ 
-  model: 'gemini-1.5-flash-002'  // Paid API: supports audio/multimodal
-});
+// Gemini API Configuration
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+
+// Helper: Call Gemini API
+async function callGeminiAPI(prompt: string, audioBase64?: string): Promise<string> {
+  const contents: any[] = [];
+  
+  if (audioBase64) {
+    contents.push({
+      parts: [
+        {
+          inlineData: {
+            mimeType: 'audio/mpeg',
+            data: audioBase64
+          }
+        },
+        { text: prompt }
+      ]
+    });
+  } else {
+    contents.push({
+      parts: [{ text: prompt }]
+    });
+  }
+
+  const res = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contents })
+  });
+
+  if (!res.ok) {
+    const error = await res.text();
+    throw new Error(`Gemini API Error: ${error}`);
+  }
+
+  const json: any = await res.json();
+  return json.candidates[0].content.parts[0].text;
+}
 
 // Create directories
 const uploadDir = path.join(__dirname, '../uploads');
@@ -152,433 +187,28 @@ app.post('/trim-video', upload.single('video'), async (req: Request, res: Respon
   }
 });
 
-// Route 2: Analyze video dengan AI
+// Route 2: Analyze video dengan AI (DISABLED - SDK removed)
 app.post('/analyze-video', upload.single('video'), async (req: Request, res: Response) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'File video tidak ditemukan' });
-    }
-
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ error: 'GEMINI_API_KEY tidak ditemukan' });
-    }
-
-    const videoPath = req.file.path;
-    const videoData = fs.readFileSync(videoPath);
-    const base64Video = videoData.toString('base64');
-
-    const result = await model.generateContent([
-      {
-        inlineData: {
-          mimeType: req.file.mimetype,
-          data: base64Video,
-        },
-      },
-      { text: `Analisa video ini dengan fokus pada audio/suara yang terdengar:
-1. Identifikasi topik utama yang dibicarakan
-2. Rangkum poin-poin penting dari percakapan atau narasi
-3. Kategorikan topik (misalnya: edukasi, hiburan, berita, tutorial, dll)
-4. Berikan deskripsi singkat tentang konteks visual yang mendukung topik
-
-Berikan analisa dalam format:
-**TOPIK UTAMA:** [topik]
-**KATEGORI:** [kategori]
-**RINGKASAN:** [ringkasan percakapan]
-**KONTEKS VISUAL:** [deskripsi visual]` },
-    ]);
-
-    const analysis = result.response.text();
-    fs.unlinkSync(videoPath);
-
-    res.json({
-      success: true,
-      analysis: analysis,
-      filename: req.file.originalname
-    });
-
-  } catch (error: any) {
-    console.error('Error analyzing video:', error);
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
-    res.status(500).json({ 
-      error: 'Gagal menganalisa video', 
-      details: error.message 
-    });
-  }
+  res.status(503).json({ 
+    error: 'Endpoint temporarily disabled. Use /process-youtube instead.' 
+  });
 });
 
-// Route 3: Generate subtitle dari audio video
+// Route 3: Generate subtitle (DISABLED - use /process-youtube)
 app.post('/generate-subtitle', upload.single('video'), async (req: Request, res: Response) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'File video tidak ditemukan' });
-    }
-
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ error: 'GEMINI_API_KEY tidak ditemukan' });
-    }
-
-    const videoPath = req.file.path;
-    const audioPath = path.join(uploadDir, `audio-${Date.now()}.mp3`);
-    const subtitleFilename = `subtitle-${Date.now()}.srt`;
-    const subtitlePath = path.join(subtitleDir, subtitleFilename);
-
-    // Extract audio from video
-    await new Promise<void>((resolve, reject) => {
-      ffmpeg(videoPath)
-        .output(audioPath)
-        .audioCodec('libmp3lame')
-        .on('end', () => resolve())
-        .on('error', (err) => reject(err))
-        .run();
-    });
-
-    // Read audio and convert to base64
-    const audioData = fs.readFileSync(audioPath);
-    const base64Audio = audioData.toString('base64');
-
-    // Generate subtitle with Gemini AI
-    const result = await model.generateContent([
-      {
-        inlineData: {
-          mimeType: 'audio/mp3',
-          data: base64Audio,
-        },
-      },
-      { 
-        text: `Transcribe audio ini dengan format SRT (SubRip). Format:
-1
-00:00:00,000 --> 00:00:05,000
-Teks subtitle pertama
-
-2
-00:00:05,000 --> 00:00:10,000
-Teks subtitle kedua
-
-Berikan hasil transcription lengkap dalam format SRT yang valid.` 
-      },
-    ]);
-
-    let subtitleContent = result.response.text();
-    subtitleContent = subtitleContent.replace(/```srt\n/g, '').replace(/```\n/g, '').replace(/```/g, '').trim();
-    
-    fs.writeFileSync(subtitlePath, subtitleContent);
-    fs.unlinkSync(videoPath);
-    fs.unlinkSync(audioPath);
-
-    res.json({
-      success: true,
-      message: 'Subtitle berhasil di-generate',
-      subtitleFile: subtitleFilename,
-      downloadUrl: `/subtitle/${subtitleFilename}`,
-      preview: subtitleContent.substring(0, 500) + '...'
-    });
-
-  } catch (error: any) {
-    console.error('Error generating subtitle:', error);
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
-    res.status(500).json({ 
-      error: 'Gagal generate subtitle', 
-      details: error.message 
-    });
-  }
+  res.status(503).json({ error: 'Use /process-youtube instead' });
 });
 
-// Route 4: Trim video dengan subtitle tertanam
+// Route 4: Trim video dengan subtitle (DISABLED - use /process-youtube)
 app.post('/trim-video-with-subtitle', upload.single('video'), async (req: Request, res: Response) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'File video tidak ditemukan' });
-    }
-
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ error: 'GEMINI_API_KEY tidak ditemukan' });
-    }
-
-    const { startTime, endTime } = req.body;
-
-    if (!startTime || !endTime) {
-      return res.status(400).json({ 
-        error: 'Parameter startTime dan endTime wajib diisi' 
-      });
-    }
-
-    const inputPath = req.file.path;
-    const audioPath = path.join(uploadDir, `audio-${Date.now()}.mp3`);
-    const subtitleFilename = `subtitle-${Date.now()}.srt`;
-    const subtitlePath = path.join(subtitleDir, subtitleFilename);
-    const outputFilename = `trimmed-with-sub-${Date.now()}${path.extname(req.file.originalname)}`;
-    const outputPath = path.join(outputDir, outputFilename);
-
-    // Extract audio
-    await new Promise<void>((resolve, reject) => {
-      ffmpeg(inputPath)
-        .output(audioPath)
-        .audioCodec('libmp3lame')
-        .on('end', () => resolve())
-        .on('error', (err) => reject(err))
-        .run();
-    });
-
-    // Generate subtitle
-    const audioData = fs.readFileSync(audioPath);
-    const base64Audio = audioData.toString('base64');
-
-    const result = await model.generateContent([
-      {
-        inlineData: {
-          mimeType: 'audio/mp3',
-          data: base64Audio,
-        },
-      },
-      { 
-        text: `Transcribe audio ini dengan format SRT (SubRip). Pastikan timing akurat.` 
-      },
-    ]);
-
-    let subtitleContent = result.response.text();
-    subtitleContent = subtitleContent.replace(/```srt\n/g, '').replace(/```\n/g, '').replace(/```/g, '').trim();
-    fs.writeFileSync(subtitlePath, subtitleContent);
-
-    // Trim video and embed subtitle
-    await new Promise<void>((resolve, reject) => {
-      ffmpeg(inputPath)
-        .setStartTime(startTime)
-        .setDuration(calculateDuration(startTime, endTime))
-        .outputOptions([
-          `-vf subtitles=${subtitlePath.replace(/\\/g, '/')}`,
-        ])
-        .output(outputPath)
-        .on('end', () => resolve())
-        .on('error', (err) => reject(err))
-        .run();
-    });
-
-    fs.unlinkSync(inputPath);
-    fs.unlinkSync(audioPath);
-
-    res.json({
-      success: true,
-      message: 'Video berhasil dipotong dengan subtitle tertanam',
-      outputFile: outputFilename,
-      subtitleFile: subtitleFilename,
-      downloadUrl: `/download/${outputFilename}`,
-      subtitleDownloadUrl: `/subtitle/${subtitleFilename}`
-    });
-
-  } catch (error: any) {
-    console.error('Error processing video with subtitle:', error);
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
-    res.status(500).json({ 
-      error: 'Gagal memproses video dengan subtitle', 
-      details: error.message 
-    });
-  }
+  res.status(503).json({ error: 'Use /process-youtube instead' });
 });
 
-// Route 5: Split video panjang menjadi banyak video pendek dengan AI metadata
+// Route 5: Split video (DISABLED - use /process-youtube)
 app.post('/split-video', upload.single('video'), async (req: Request, res: Response) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'File video tidak ditemukan' });
-    }
-
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ error: 'GEMINI_API_KEY tidak ditemukan' });
-    }
-
-    const { clipDuration } = req.body;
-    const duration = clipDuration ? parseInt(clipDuration) : 60; // Default 60 detik
-    
-    const videoPath = req.file.path;
-    const audioPath = path.join(uploadDir, `audio-${Date.now()}.mp3`);
-
-    console.log('Processing video...');
-
-    // Get video duration
-    const videoDuration = await new Promise<number>((resolve, reject) => {
-      ffmpeg.ffprobe(videoPath, (err, metadata) => {
-        if (err) reject(err);
-        else resolve(metadata.format.duration || 0);
-      });
-    });
-
-    console.log(`Video duration: ${videoDuration} seconds`);
-
-    // Extract audio
-    console.log('Extracting audio...');
-    await new Promise<void>((resolve, reject) => {
-      ffmpeg(videoPath)
-        .output(audioPath)
-        .audioCodec('libmp3lame')
-        .on('end', () => resolve())
-        .on('error', (err) => reject(err))
-        .run();
-    });
-
-    const numClips = Math.ceil(videoDuration / duration);
-    console.log(`Will create ${numClips} clips`);
-
-    const clips = [];
-
-    // Process each clip
-    for (let i = 0; i < numClips; i++) {
-      const startTime = i * duration;
-      const endTime = Math.min((i + 1) * duration, videoDuration);
-      const clipDurationActual = endTime - startTime;
-
-      console.log(`Processing clip ${i + 1}/${numClips}`);
-
-      const clipFilename = `clip-${Date.now()}-${i + 1}.mp4`;
-      const clipPath = path.join(outputDir, clipFilename);
-      const clipAudioPath = path.join(uploadDir, `clip-audio-${Date.now()}-${i}.mp3`);
-      const clipSubtitleFilename = `subtitle-clip-${Date.now()}-${i + 1}.srt`;
-      const clipSubtitlePath = path.join(subtitleDir, clipSubtitleFilename);
-
-      // Trim video
-      await new Promise<void>((resolve, reject) => {
-        ffmpeg(videoPath)
-          .setStartTime(startTime)
-          .setDuration(clipDurationActual)
-          .output(clipPath)
-          .on('end', () => resolve())
-          .on('error', (err) => reject(err))
-          .run();
-      });
-
-      // Extract audio from clip
-      await new Promise<void>((resolve, reject) => {
-        ffmpeg(clipPath)
-          .output(clipAudioPath)
-          .audioCodec('libmp3lame')
-          .on('end', () => resolve())
-          .on('error', (err) => reject(err))
-          .run();
-      });
-
-      // Generate subtitle for this clip
-      const clipAudioData = fs.readFileSync(clipAudioPath);
-      const base64ClipAudio = clipAudioData.toString('base64');
-
-      const clipSubResult = await model.generateContent([
-        {
-          inlineData: {
-            mimeType: 'audio/mp3',
-            data: base64ClipAudio,
-          },
-        },
-        { 
-          text: `Transcribe audio ini dengan format SRT. Mulai dari timestamp 00:00:00.` 
-        },
-      ]);
-
-      let clipSubtitle = clipSubResult.response.text();
-      clipSubtitle = clipSubtitle.replace(/```srt\n/g, '').replace(/```\n/g, '').replace(/```/g, '').trim();
-      fs.writeFileSync(clipSubtitlePath, clipSubtitle);
-
-      // Analyze clip and generate metadata
-      console.log(`Analyzing clip ${i + 1} with AI...`);
-      const metadataResult = await model.generateContent([
-        {
-          inlineData: {
-            mimeType: 'audio/mp3',
-            data: base64ClipAudio,
-          },
-        },
-        { 
-          text: `Berdasarkan audio ini, buatkan metadata untuk video pendek dengan format JSON:
-{
-  "title": "Judul menarik (maksimal 60 karakter)",
-  "description": "Deskripsi singkat (100-150 karakter)",
-  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
-  "category": "kategori video",
-  "viralityScore": 85,
-  "targetAudience": "Target audience",
-  "suggestedHashtags": ["#hashtag1", "#hashtag2", "#hashtag3"]
-}
-
-Response dalam format JSON valid tanpa markdown.` 
-        },
-      ]);
-
-      let metadataText = metadataResult.response.text();
-      metadataText = metadataText.replace(/```json\n/g, '').replace(/```\n/g, '').replace(/```/g, '').trim();
-      
-      let metadata;
-      try {
-        metadata = JSON.parse(metadataText);
-      } catch (e) {
-        metadata = {
-          title: `Clip ${i + 1}`,
-          description: `Segment ${i + 1}`,
-          tags: ['video', 'clip'],
-          category: 'General',
-          viralityScore: 50,
-          targetAudience: 'General',
-          suggestedHashtags: ['#shorts']
-        };
-      }
-
-      // Create final clip with subtitle
-      const finalClipFilename = `final-clip-${Date.now()}-${i + 1}.mp4`;
-      const finalClipPath = path.join(outputDir, finalClipFilename);
-
-      await new Promise<void>((resolve, reject) => {
-        ffmpeg(clipPath)
-          .outputOptions([
-            `-vf subtitles=${clipSubtitlePath.replace(/\\/g, '/')}`,
-          ])
-          .output(finalClipPath)
-          .on('end', () => resolve())
-          .on('error', (err) => reject(err))
-          .run();
-      });
-
-      fs.unlinkSync(clipPath);
-      fs.unlinkSync(clipAudioPath);
-
-      clips.push({
-        clipNumber: i + 1,
-        filename: finalClipFilename,
-        subtitleFile: clipSubtitleFilename,
-        startTime: formatTime(startTime),
-        endTime: formatTime(endTime),
-        duration: Math.round(clipDurationActual),
-        metadata: metadata,
-        downloadUrl: `/download/${finalClipFilename}`,
-        subtitleDownloadUrl: `/subtitle/${clipSubtitleFilename}`
-      });
-
-      console.log(`Clip ${i + 1} completed!`);
-    }
-
-    fs.unlinkSync(videoPath);
-    fs.unlinkSync(audioPath);
-
-    res.json({
-      success: true,
-      message: `Video berhasil dipecah menjadi ${numClips} clip`,
-      totalClips: numClips,
-      clipDuration: duration,
-      clips: clips
-    });
-
-  } catch (error: any) {
-    console.error('Error splitting video:', error);
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
-    res.status(500).json({ 
-      error: 'Gagal memecah video', 
-      details: error.message 
-    });
-  }
+  res.status(503).json({ error: 'Use /process-youtube instead' });
 });
+
 
 // Route: Download file
 app.get('/download/:filename', (req: Request, res: Response) => {
@@ -912,17 +542,7 @@ PENTING:
 - Pilih momen PALING MENARIK saja
 - Response HARUS valid JSON array`;
 
-    const result = await model.generateContent([
-      {
-        inlineData: {
-          mimeType: 'audio/mpeg',
-          data: audioBase64
-        }
-      },
-      { text: prompt }
-    ]);
-
-    const response = result.response.text();
+    const response = await callGeminiAPI(prompt, audioBase64);
     console.log('AI Response:', response);
 
     // Extract JSON from response
@@ -1033,13 +653,13 @@ Requirements:
 
 Return HANYA text subtitle, tanpa quote atau format lain.`;
 
-    const result = await model.generateContent(prompt);
-    const subtitle = result.response.text()
+    const subtitle = await callGeminiAPI(prompt);
+    const cleanSubtitle = subtitle
       .trim()
       .replace(/^["']|["']$/g, ''); // Remove quotes
     
     // Limit to 80 characters for readability on video
-    return subtitle.length > 80 ? subtitle.substring(0, 77) + '...' : subtitle;
+    return cleanSubtitle.length > 80 ? cleanSubtitle.substring(0, 77) + '...' : cleanSubtitle;
 
   } catch (error: any) {
     console.error('Subtitle generation error:', error);
