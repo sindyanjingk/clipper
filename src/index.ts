@@ -16,7 +16,7 @@ const PORT = process.env.PORT || 3000;
 
 // Initialize Gemini AI
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
-const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
 // Create directories
 const uploadDir = path.join(__dirname, '../uploads');
@@ -1049,7 +1049,7 @@ function cleanupFiles(filePaths: string[]) {
 app.get('/', (req: Request, res: Response) => {
   res.json({ 
     message: 'Video Clipper API with AI Analysis',
-    model: 'gemini-1.5-pro',
+    model: 'gemini-1.5-flash',
     endpoints: {
       processYoutube: 'POST /process-youtube - Download YouTube → AI analyze → Trim viral clips → Burn subtitle (body: { url: "youtube_url" })',
       trimVideo: 'POST /trim-video - Potong video (multipart/form-data: video, startTime, endTime)',
