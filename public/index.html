@@ -569,13 +569,21 @@
 
                 clearTimeout(timeoutId);
 
+                console.log('Response status:', response.status);
+                console.log('Response headers:', [...response.headers.entries()]);
+
                 // Check if response is JSON before parsing
                 const contentType = response.headers.get('content-type');
+                console.log('Content-Type:', contentType);
+                
                 if (!contentType || !contentType.includes('application/json')) {
+                    const responseText = await response.text();
+                    console.error('Non-JSON response:', responseText.substring(0, 500));
                     throw new Error('Server sedang memproses atau mengalami error. Coba lagi dalam beberapa saat.');
                 }
 
                 const data = await response.json();
+                console.log('Response data:', data);
 
                 if (!response.ok) {
                     throw new Error(data.error || 'Terjadi kesalahan');

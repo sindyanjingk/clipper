@@ -178,7 +178,14 @@ function formatTime(seconds: number): string {
 
 // MAIN ENDPOINT: Process YouTube Video (Download → AI Analyze → Trim → Subtitle)
 app.post('/process-youtube', express.json(), async (req: Request, res: Response): Promise<any> => {
+  // Set timeout for this specific request (30 minutes)
+  req.setTimeout(SERVER_TIMEOUT);
+  res.setTimeout(SERVER_TIMEOUT);
+  
   try {
+    // Set response headers first
+    res.setHeader('Content-Type', 'application/json');
+    
     const { url } = req.body;
 
     if (!url || typeof url !== 'string') {
@@ -315,23 +322,31 @@ app.post('/process-youtube', express.json(), async (req: Request, res: Response)
     console.log(`✅ Successfully processed ${processedClips.length}/${viralSegments.length} clips`);
     console.log('✅ =============================================\n');
     
-    res.json({
+    const response = {
       success: true,
       message: 'Video berhasil diproses',
       jobId,
       totalClips: processedClips.length,
       clips: processedClips
-    });
+    };
+    
+    console.log('📤 Sending response to client:', JSON.stringify(response, null, 2));
+    res.json(response);
 
   } catch (error: any) {
     console.error('❌ Error:', error);
+    console.error('❌ Error stack:', error.stack);
     
     // Make sure we always return JSON
     if (!res.headersSent) {
+      res.setHeader('Content-Type', 'application/json');
       res.status(500).json({ 
+        success: false,
         error: 'Failed to process video',
         details: error.message 
       });
+    } else {
+      console.error('❌ Headers already sent, cannot send error response');
     }
   }
 });
