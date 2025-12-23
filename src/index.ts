@@ -404,8 +404,18 @@ app.post('/process-youtube', express.json(), async (req: Request, res: Response)
         `${jobId}-clip-${i + 1}`
       );
 
-      // Generate subtitle
-      const subtitleText = await generateSubtitleForClip(audioPath, segment);
+      // Extract audio from this specific clip
+      const clipAudioPath = path.join(outputDir, `${jobId}-clip-${i + 1}-audio.mp3`);
+      await extractAudio(clippedVideo, clipAudioPath);
+
+      // Transcribe audio to text (speech-to-text)
+      const subtitleText = await transcribeAudioToText(clipAudioPath);
+      console.log(`📝 Transcribed subtitle: "${subtitleText}"`);
+
+      // Cleanup clip audio
+      if (fs.existsSync(clipAudioPath)) {
+        fs.unlinkSync(clipAudioPath);
+      }
 
       // Burn subtitle to video
       const finalVideo = await burnSubtitleToVideo(
@@ -413,6 +423,7 @@ app.post('/process-youtube', express.json(), async (req: Request, res: Response)
         subtitleText,
         `${jobId}-final-${i + 1}`
       );
+      console.log(`✅ Burned subtitle to: ${path.basename(finalVideo)}`);
 
       // Cleanup temporary clipped video
       if (fs.existsSync(clippedVideo)) {
@@ -659,35 +670,29 @@ function trimVideo(inputPath: string, startTime: number, endTime: number, output
   });
 }
 
-// Helper: Generate subtitle for clip with audio context
-async function generateSubtitleForClip(audioPath: string, segment: ViralSegment): Promise<string> {
+// Helper: Transcribe audio to text using Gemini
+async function transcribeAudioToText(audioPath: string): Promise<string> {
   try {
-    // Use text-based prompt with context for efficiency
-    const prompt = `Buatkan subtitle/caption yang VIRAL untuk video clip ${segment.duration} detik.
-
-Konten: ${segment.reason}
-Keywords: ${segment.keywords.join(', ')}
-
-Requirements:
-- Maksimal 2 baris
-- SUPER engaging dan eye-catching
-- Perfect untuk TikTok/Reels/Shorts
-- Bikin orang penasaran dan tertarik nonton
-- Pakai bahasa yang catchy, bisa campuran indo-english
-
-Return HANYA text subtitle, tanpa quote atau format lain.`;
-
-    const subtitle = await callGeminiAPI(prompt);
-    const cleanSubtitle = subtitle
-      .trim()
-      .replace(/^["']|["']$/g, ''); // Remove quotes
+    console.log(`🎙️ Transcribing audio: ${audioPath}`);
     
-    // Limit to 80 characters for readability on video
-    return cleanSubtitle.length > 80 ? cleanSubtitle.substring(0, 77) + '...' : cleanSubtitle;
+    // Read audio file and convert to base64
+    const audioBuffer = fs.readFileSync(audioPath);
+    const audioBase64 = audioBuffer.toString('base64');
+
+    const prompt = `Transcribe this audio to text. Return ONLY the exact words spoken, without any additional formatting, quotes, or explanations. If multiple sentences, separate with spaces.`;
+
+    const transcription = await callGeminiAPI(prompt, audioBase64);
+    const cleanText = transcription
+      .trim()
+      .replace(/^["']|["']$/g, '') // Remove quotes
+      .replace(/\n+/g, ' '); // Replace newlines with spaces
+    
+    console.log(`   Transcribed: "${cleanText}"`);
+    return cleanText || 'No speech detected';
 
   } catch (error: any) {
-    console.error('Subtitle generation error:', error);
-    return segment.reason.substring(0, 77); // Fallback to reason
+    console.error('Transcription error:', error);
+    return 'Audio transcription failed';
   }
 }
 
@@ -696,34 +701,47 @@ function burnSubtitleToVideo(videoPath: string, subtitleText: string, outputName
   return new Promise((resolve, reject) => {
     const outputPath = path.join(outputDir, `${outputName}.mp4`);
     
-    // Escape subtitle text for ffmpeg
+    console.log(`🔥 Burning subtitle to video...`);
+    console.log(`   Input: ${videoPath}`);
+    console.log(`   Output: ${outputPath}`);
+    console.log(`   Subtitle: "${subtitleText}"`);
+    
+    // Escape subtitle text for ffmpeg drawtext filter
     const escapedText = subtitleText
-      .replace(/'/g, "'\\''")
-      .replace(/:/g, '\\:');
+      .replace(/\\/g, '\\\\')     // Escape backslashes first
+      .replace(/'/g, "'\\''")     // Escape single quotes
+      .replace(/:/g, '\\:')       // Escape colons
+      .replace(/\n/g, '\\n');     // Escape newlines
+
+    const drawTextFilter = `drawtext=text='${escapedText}':fontsize=40:fontcolor=white:x=(w-text_w)/2:y=h-th-50:borderw=3:bordercolor=black:box=1:boxcolor=black@0.5:boxborderw=10`;
+    
+    console.log(`   Filter: ${drawTextFilter}`);
 
     ffmpeg(videoPath)
       .output(outputPath)
       .videoCodec('libx264')
       .audioCodec('aac')
-      .videoFilters([
-        {
-          filter: 'drawtext',
-          options: {
-            text: escapedText,
-            fontsize: 40,
-            fontcolor: 'white',
-            x: '(w-text_w)/2',
-            y: 'h-th-50',
-            borderw: 3,
-            bordercolor: 'black',
-            box: 1,
-            boxcolor: 'black@0.5',
-            boxborderw: 10
-          }
-        }
+      .outputOptions([
+        '-vf', drawTextFilter,
+        '-preset', 'fast',
+        '-crf', '23'
       ])
-      .on('end', () => resolve(outputPath))
-      .on('error', (err) => reject(err))
+      .on('start', (cmd) => {
+        console.log(`   FFmpeg command: ${cmd}`);
+      })
+      .on('progress', (progress) => {
+        if (progress.percent) {
+          console.log(`   Progress: ${Math.round(progress.percent)}%`);
+        }
+      })
+      .on('end', () => {
+        console.log(`   ✅ Subtitle burned successfully!`);
+        resolve(outputPath);
+      })
+      .on('error', (err) => {
+        console.error(`   ❌ FFmpeg error:`, err.message);
+        reject(err);
+      })
       .run();
   });
 }
