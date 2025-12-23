@@ -159,196 +159,6 @@ function formatTime(seconds: number): string {
   return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
-// Route 1: Trim/potong video
-app.post('/trim-video', upload.single('video'), async (req: Request, res: Response) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'File video tidak ditemukan' });
-    }
-
-    const { startTime, endTime } = req.body;
-
-    if (!startTime || !endTime) {
-      return res.status(400).json({ 
-        error: 'Parameter startTime dan endTime wajib diisi (format: HH:MM:SS atau detik)' 
-      });
-    }
-
-    const inputPath = req.file.path;
-    const outputFilename = `trimmed-${Date.now()}${path.extname(req.file.originalname)}`;
-    const outputPath = path.join(outputDir, outputFilename);
-
-    ffmpeg(inputPath)
-      .setStartTime(startTime)
-      .setDuration(calculateDuration(startTime, endTime))
-      .output(outputPath)
-      .on('end', () => {
-        fs.unlinkSync(inputPath);
-        res.json({
-          success: true,
-          message: 'Video berhasil dipotong',
-          outputFile: outputFilename,
-          downloadUrl: `/download/${outputFilename}`
-        });
-      })
-      .on('error', (err) => {
-        console.error('Error saat memproses video:', err);
-        if (fs.existsSync(inputPath)) {
-          fs.unlinkSync(inputPath);
-        }
-        res.status(500).json({ 
-          error: 'Gagal memotong video', 
-          details: err.message 
-        });
-      })
-      .run();
-
-  } catch (error: any) {
-    res.status(500).json({ 
-      error: 'Terjadi kesalahan pada server', 
-      details: error.message 
-    });
-  }
-});
-
-// Route 2: Analyze video dengan AI (DISABLED - SDK removed)
-app.post('/analyze-video', upload.single('video'), async (req: Request, res: Response) => {
-  res.status(503).json({ 
-    error: 'Endpoint temporarily disabled. Use /process-youtube instead.' 
-  });
-});
-
-// Route 3: Generate subtitle (DISABLED - use /process-youtube)
-app.post('/generate-subtitle', upload.single('video'), async (req: Request, res: Response) => {
-  res.status(503).json({ error: 'Use /process-youtube instead' });
-});
-
-// Route 4: Trim video dengan subtitle (DISABLED - use /process-youtube)
-app.post('/trim-video-with-subtitle', upload.single('video'), async (req: Request, res: Response) => {
-  res.status(503).json({ error: 'Use /process-youtube instead' });
-});
-
-// Route 5: Split video (DISABLED - use /process-youtube)
-app.post('/split-video', upload.single('video'), async (req: Request, res: Response) => {
-  res.status(503).json({ error: 'Use /process-youtube instead' });
-});
-
-
-// Route: Download file
-app.get('/download/:filename', (req: Request, res: Response) => {
-  const filename = req.params.filename;
-  const filePath = path.join(outputDir, filename);
-
-  if (fs.existsSync(filePath)) {
-    res.download(filePath);
-  } else {
-    res.status(404).json({ error: 'File tidak ditemukan' });
-  }
-});
-
-// Route: Download subtitle
-app.get('/subtitle/:filename', (req: Request, res: Response) => {
-  const filename = req.params.filename;
-  const filePath = path.join(subtitleDir, filename);
-
-  if (fs.existsSync(filePath)) {
-    res.download(filePath);
-  } else {
-    res.status(404).json({ error: 'File subtitle tidak ditemukan' });
-  }
-});
-
-// Helper function to sanitize filename
-function sanitizeFilename(name: string): string {
-  return name
-    .normalize("NFKD")                 // normalize unicode
-    .replace(/[^\w\s.-]/g, "")         // hapus karakter ilegal
-    .replace(/\s+/g, " ")              // rapikan spasi
-    .trim();
-}
-
-// YouTube Download Route
-app.get('/download-youtube', async (req: Request, res: Response): Promise<any> => {
-  const { url } = req.query;
-
-  if (!url || typeof url !== 'string') {
-    return res.status(400).json({ error: "YouTube URL is required" });
-  }
-
-  // unik per request (hindari bentrok file)
-  const jobId = crypto.randomUUID();
-  const outputTemplate = path.join(
-    downloadDir,
-    `${jobId}-%(title)s.%(ext)s`
-  );
-
-  const args = [
-    "--no-playlist",
-
-    // WAJIB untuk YouTube terbaru
-    "--js-runtimes", "node",
-
-    // Hindari blokir
-    "--user-agent",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-
-    // Paksa MP4
-    "-f", "bv*[vcodec^=avc1][ext=mp4]+ba[acodec^=mp4]/b[ext=mp4]/b",
-    "--merge-output-format", "mp4",
-
-    "-o", outputTemplate,
-    url
-  ];
-
-  const ytdlp = spawn("yt-dlp", args);
-
-  ytdlp.stderr.on("data", (data: Buffer) => {
-    console.log(`[yt-dlp] ${data}`);
-  });
-
-  ytdlp.on("error", (err: Error) => {
-    console.error(err);
-    return res.status(500).json({ error: "Failed to start yt-dlp" });
-  });
-
-  ytdlp.on("close", (code: number | null) => {
-    if (code !== 0) {
-      return res.status(500).json({
-        error: "yt-dlp failed to download video"
-      });
-    }
-
-    const files = fs
-      .readdirSync(downloadDir)
-      .filter(f => f.startsWith(jobId) && f.endsWith(".mp4"));
-
-    if (!files.length) {
-      return res.status(500).json({
-        error: "Download failed, no output file"
-      });
-    }
-
-    const fileName = files[0];
-    const filePath = path.join(downloadDir, fileName);
-
-    const rawName = fileName.replace(jobId + "-", "");
-    const safeName = sanitizeFilename(rawName);
-
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${safeName}"`
-    );
-    res.setHeader("Content-Type", "video/mp4");
-
-    const stream = fs.createReadStream(filePath);
-    stream.pipe(res);
-
-    // hapus file setelah selesai dikirim
-    stream.on("close", () => {
-      fs.unlink(filePath, () => {});
-    });
-  });
-});
 
 // MAIN ENDPOINT: Process YouTube Video (Download → AI Analyze → Trim → Subtitle)
 app.post('/process-youtube', express.json(), async (req: Request, res: Response): Promise<any> => {
@@ -382,11 +192,11 @@ app.post('/process-youtube', express.json(), async (req: Request, res: Response)
     console.log('🤖 Step 3: AI analyzing viral moments...');
     const viralSegments = await findViralMoments(audioPath, duration);
 
-    if (!viralSegments || viralSegments.length === 0) {
-      // Cleanup
-      cleanupFiles([downloadedVideo, audioPath]);
-      return res.status(500).json({ error: 'No viral segments found' });
-    }
+    // if (!viralSegments || viralSegments.length === 0) {
+    //   // Cleanup
+    //   cleanupFiles([downloadedVideo, audioPath]);
+    //   return res.status(500).json({ error: 'No viral segments found' });
+    // }
 
     // Step 5: Process each viral segment (trim + subtitle)
     console.log(`✂️ Step 4: Processing ${viralSegments.length} viral clips...`);
@@ -591,7 +401,6 @@ async function findViralMoments(audioPath: string, totalDuration: number): Promi
 
     const prompt = `Kamu adalah AI expert yang menganalisis konten video untuk menemukan momen-momen VIRAL.
 
-Analisa audio ini dan temukan 3-5 segmen paling VIRAL (40-60 detik per segmen) yang:
 - Memiliki emosi kuat (excitement, surprise, humor, dramatic, inspiring)
 - Konten engaging yang menarik perhatian
 - Cocok untuk viral di TikTok, Instagram Reels, YouTube Shorts
