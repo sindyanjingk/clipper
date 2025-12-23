@@ -18,6 +18,9 @@ const PORT = process.env.PORT || 3000;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
+// serve static folder
+app.use("/downloads", express.static(path.resolve("downloads")));
+
 // Helper: Call Gemini API
 async function callGeminiAPI(prompt: string, audioBase64?: string): Promise<string> {
   const contents: any[] = [];
