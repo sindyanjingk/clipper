@@ -14,6 +14,9 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Set timeout to 30 minutes for long video processing
+const SERVER_TIMEOUT = 30 * 60 * 1000; // 30 minutes in milliseconds
+
 // Gemini API Configuration
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
@@ -133,6 +136,19 @@ interface ViralSegment {
   keywords: string[];
 }
 
+// Interface untuk processed clip
+interface ProcessedClip {
+  clipNumber: number;
+  filename: string;
+  startTime: string;
+  endTime: string;
+  duration: number;
+  reason: string;
+  keywords: string[];
+  previewUrl: string;
+  downloadUrl: string;
+}
+
 // Helper functions
 function calculateDuration(startTime: string, endTime: string): number {
   const start = parseTime(startTime);
@@ -200,11 +216,14 @@ app.post('/process-youtube', express.json(), async (req: Request, res: Response)
 
     // Step 5: Process each viral segment (trim + subtitle)
     console.log(`✂️ Step 4: Processing ${viralSegments.length} viral clips...`);
-    const processedClips = [];
+    const processedClips: ProcessedClip[] = [];
 
-    for (let i = 0; i < viralSegments.length; i++) {
+    // Process clips with limited concurrency (2 at a time to avoid overload)
+    const CONCURRENT_LIMIT = 2;
+    
+    const processClip = async (segment: ViralSegment, index: number): Promise<ProcessedClip | null> => {
       try {
-        const segment = viralSegments[i];
+        const i = index;
         console.log(`\n=== Processing clip ${i + 1}/${viralSegments.length} ===`);
         console.log(`   Time range: ${segment.startTime}s - ${segment.endTime}s (${segment.duration}s)`);
 
@@ -255,7 +274,7 @@ app.post('/process-youtube', express.json(), async (req: Request, res: Response)
           console.log(`   🗑️ Cleaned up temp video`);
         }
 
-        processedClips.push({
+        const result = {
           clipNumber: i + 1,
           filename: path.basename(finalVideo),
           startTime: formatTime(segment.startTime),
@@ -265,15 +284,27 @@ app.post('/process-youtube', express.json(), async (req: Request, res: Response)
           keywords: segment.keywords,
           previewUrl: `/output/${path.basename(finalVideo)}`,
           downloadUrl: `/download/${path.basename(finalVideo)}`
-        });
+        };
 
         console.log(`   ✅ Clip ${i + 1}/${viralSegments.length} completed!\n`);
+        return result;
 
       } catch (clipError: any) {
-        console.error(`   ❌ Error processing clip ${i + 1}:`, clipError.message);
-        // Continue with next clip instead of failing entire process
-        continue;
+        console.error(`   ❌ Error processing clip ${index + 1}:`, clipError.message);
+        return null;
       }
+    };
+
+    // Process in batches of CONCURRENT_LIMIT
+    for (let i = 0; i < viralSegments.length; i += CONCURRENT_LIMIT) {
+      const batch = viralSegments.slice(i, i + CONCURRENT_LIMIT);
+      const batchPromises = batch.map((segment, idx) => processClip(segment, i + idx));
+      const results = await Promise.all(batchPromises);
+      
+      // Add successful results
+      results.forEach(result => {
+        if (result) processedClips.push(result);
+      });
     }
 
     // Cleanup original files
@@ -294,10 +325,14 @@ app.post('/process-youtube', express.json(), async (req: Request, res: Response)
 
   } catch (error: any) {
     console.error('❌ Error:', error);
-    res.status(500).json({ 
-      error: 'Failed to process video',
-      details: error.message 
-    });
+    
+    // Make sure we always return JSON
+    if (!res.headersSent) {
+      res.status(500).json({ 
+        error: 'Failed to process video',
+        details: error.message 
+      });
+    }
   }
 });
 
@@ -310,8 +345,11 @@ function downloadYouTubeVideo(url: string, jobId: string): Promise<string> {
       "--no-playlist",
       "--js-runtimes", "node",
       "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-      "-f", "bv*[vcodec^=avc1][ext=mp4]+ba[acodec^=mp4]/b[ext=mp4]/b",
+      // Limit to 720p max for faster download (can be 480p for even faster)
+      "-f", "bv*[height<=720][vcodec^=avc1][ext=mp4]+ba[acodec^=mp4]/b[height<=720][ext=mp4]/b",
       "--merge-output-format", "mp4",
+      // Limit download speed is optional, but can help with server stability
+      // "--limit-rate", "5M",  // Uncomment to limit speed to 5MB/s
       "-o", outputTemplate,
       url
     ];
@@ -356,6 +394,8 @@ function extractAudio(videoPath: string, jobId: string): Promise<string> {
       .output(audioPath)
       .noVideo()
       .audioCodec('libmp3lame')
+      .audioBitrate('64k')  // Lower bitrate for smaller file (64k is enough for speech)
+      .audioChannels(1)     // Mono audio for speech analysis
       .on('end', () => resolve(audioPath))
       .on('error', (err) => reject(err))
       .run();
@@ -371,6 +411,8 @@ function extractAudioFromClip(videoPath: string, clipId: string): Promise<string
       .output(audioPath)
       .noVideo()
       .audioCodec('libmp3lame')
+      .audioBitrate('64k')  // Lower bitrate for smaller file
+      .audioChannels(1)     // Mono audio
       .on('end', () => resolve(audioPath))
       .on('error', (err) => reject(err))
       .run();
@@ -515,6 +557,11 @@ function trimVideo(inputPath: string, startTime: number, endTime: number, output
       .output(outputPath)
       .videoCodec('libx264')
       .audioCodec('aac')
+      .outputOptions([
+        '-preset', 'ultrafast',  // Fastest encoding (5-10x faster than default)
+        '-crf', '28',            // Lower quality but much faster (23=high, 28=medium)
+        '-movflags', '+faststart' // Enable web streaming
+      ])
       .on('end', () => resolve(outputPath))
       .on('error', (err) => reject(err))
       .run();
@@ -620,8 +667,10 @@ function burnSRTSubtitleToVideo(videoPath: string, srtPath: string, outputName: 
       .audioCodec('aac')
       .outputOptions([
         '-vf', subtitleFilter,
-        '-preset', 'fast',
-        '-crf', '23'
+        '-preset', 'ultrafast',  // Much faster encoding
+        '-crf', '28',            // Lower quality, faster processing
+        '-movflags', '+faststart',  // Enable fast web playback
+        '-threads', '0'          // Use all CPU cores
       ])
       .on('start', (cmd) => {
         console.log(`   FFmpeg command: ${cmd}`);
@@ -676,6 +725,11 @@ app.get('/', (req: Request, res: Response) => {
   });
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server berjalan di http://localhost:${PORT}`);
 });
+
+// Set server timeout for long-running video processing
+server.timeout = SERVER_TIMEOUT;
+server.keepAliveTimeout = SERVER_TIMEOUT;
+server.headersTimeout = SERVER_TIMEOUT + 1000;
